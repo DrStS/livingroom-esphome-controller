@@ -1,0 +1,47 @@
+name: YAML Sanity
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  yaml-sanity:
+    name: YAML parse sanity
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Python YAML parser
+        run: python3 -m pip install pyyaml
+
+      - name: Parse YAML files
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          class Loader(yaml.SafeLoader):
+              pass
+
+          def unknown(loader, tag_suffix, node):
+              if isinstance(node, yaml.ScalarNode):
+                  return loader.construct_scalar(node)
+              if isinstance(node, yaml.SequenceNode):
+                  return loader.construct_sequence(node)
+              if isinstance(node, yaml.MappingNode):
+                  return loader.construct_mapping(node)
+              return None
+
+          Loader.add_multi_constructor("!", unknown)
+
+          for path in Path(".").rglob("*.yaml"):
+              if ".esphome" in path.parts:
+                  continue
+              with path.open("r", encoding="utf-8") as f:
+                  yaml.load(f, Loader=Loader)
+              print(f"OK {path}")
+          PY

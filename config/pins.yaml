@@ -1,0 +1,40 @@
+# ZENTRALE PIN-KONFIGURATION
+# GPIOxx muss vor dem Kompilieren ersetzt werden.
+# Für Waveshare ESP32-S3-ETH/W5500 sind Ethernet-Pins reserviert.
+
+substitutions:
+  # W5500 Ethernet
+  pin_eth_clk: GPIO13
+  pin_eth_mosi: GPIO11
+  pin_eth_miso: GPIO12
+  pin_eth_cs: GPIO14
+  pin_eth_interrupt: GPIO10
+  pin_eth_reset: GPIO9
+
+  # I2C: SHT45 + INA226 12V + INA226 5V
+  pin_i2c_sda: GPIOxx
+  pin_i2c_scl: GPIOxx
+
+  # 1-Wire: beide DS18B20 auf einem Bus
+  pin_onewire: GPIOxx
+
+  # LED-Datenleitungen: ESP32 -> 74AHCT125 -> 330 Ohm -> Strip DATA
+  pin_led_sideboard: GPIOxx
+  pin_led_glass_edge: GPIOxx
+  pin_led_inner_diffuser: GPIOxx
+
+  # Motorcontroller: 3,3-V-kompatibel laut Vorgabe, direkte Signale + externe Pulldowns
+  pin_motor_rpwm: GPIOxx
+  pin_motor_lpwm: GPIOxx
+  pin_motor_ren: GPIOxx
+  pin_motor_len: GPIOxx
+
+  # Encoder / Endschalter
+  pin_encoder_a: GPIOxx
+  pin_encoder_b: GPIOxx
+  pin_endstop_top: GPIOxx
+  pin_endstop_bottom: GPIOxx
+
+  # 4-Pin-Fan: PWM über Open-Collector/BC547/BC337, Tacho mit Pull-up auf 3,3 V
+  pin_fan_pwm: GPIOxx
+  pin_fan_tach: GPIOxx

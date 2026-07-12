@@ -1,0 +1,25 @@
+# ZENTRALE HARDWAREPARAMETER
+
+substitutions:
+  led_sideboard_pixels: "112"
+  led_glass_edge_pixels: "103"
+  led_inner_diffuser_pixels: "1"   # später final setzen
+
+  lift_top_position_pulses: "940"
+  lift_slow_zone_pulses: "80"
+  lift_ramp_ms: "800"
+  lift_cruise_duty_up: "0.72"
+  lift_cruise_duty_down: "0.62"
+  lift_homing_duty: "0.30"
+  motor_pwm_frequency: 20000 Hz
+
+  ina226_12v_address: "0x40"
+  ina226_5v_address: "0x41"
+  ina226_12v_shunt: "0.001 ohm"
+  ina226_5v_shunt: "0.001 ohm"
+  ina226_12v_max_current: "20A"
+  ina226_5v_max_current: "25A"
+
+  ds18b20_av_address: "0x0000000000000000"
+  ds18b20_cabinet_address: "0x0000000000000000"
+  sht45_address: "0x44"

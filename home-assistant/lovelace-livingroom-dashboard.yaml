@@ -1,0 +1,54 @@
+title: Wohnzimmer
+views:
+  - title: Wohnzimmer
+    path: wohnzimmer
+    icon: mdi:sofa
+    cards:
+      - type: entities
+        title: TV-Lift
+        entities:
+          - entity: cover.tv_lift
+          - entity: sensor.tv_lift_position_percent
+          - entity: sensor.tv_lift_position_pulses
+          - entity: binary_sensor.tv_lift_homed
+          - entity: binary_sensor.tv_lift_fault
+          - entity: button.tv_lift_reference
+          - entity: button.tv_lift_clear_fault
+
+      - type: entities
+        title: Licht
+        entities:
+          - entity: light.sideboard_ambient
+          - entity: light.cabinet_glass_edge
+          - entity: light.cabinet_inner_diffuser
+          - entity: select.livingroom_light_scene
+          - entity: number.livingroom_effect_intensity
+          - entity: number.livingroom_effect_speed
+
+      - type: entities
+        title: Rails / Leistung
+        entities:
+          - entity: sensor.rail_12v_voltage
+          - entity: sensor.rail_12v_current
+          - entity: sensor.rail_12v_power
+          - entity: sensor.rail_5v_voltage
+          - entity: sensor.rail_5v_current
+          - entity: sensor.rail_5v_power
+
+      - type: entities
+        title: Klima / Lüfter
+        entities:
+          - entity: sensor.av_receiver_temperature
+          - entity: sensor.cabinet_temperature
+          - entity: sensor.livingroom_temperature
+          - entity: sensor.livingroom_humidity
+          - entity: sensor.av_fan_rpm
+
+      - type: history-graph
+        title: Lift / Rails
+        hours_to_show: 2
+        entities:
+          - sensor.tv_lift_position_percent
+          - sensor.rail_12v_current
+          - sensor.rail_5v_current
+          - sensor.av_fan_rpm

@@ -1,0 +1,236 @@
+# Home Assistant package: Living Room Modes
+#
+# Copy this file to:
+#   /config/packages/livingroom_modes.yaml
+#
+# And enable packages in configuration.yaml:
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# This package controls whole-room modes.
+# Fast LED effects and lift safety stay local on the ESP32.
+
+input_select:
+  livingroom_mode:
+    name: Living Room Mode
+    options:
+      - "Off"
+      - "Manual"
+      - "Romantic Campfire"
+      - "Cinema"
+      - "Gaming"
+      - "Maintenance"
+      - "TV Lift Show"
+    initial: "Manual"
+    icon: mdi:sofa
+
+script:
+  livingroom_set_mode:
+    alias: "Living Room: Set Mode"
+    mode: restart
+    fields:
+      mode:
+        name: Mode
+        required: true
+        selector:
+          select:
+            options:
+              - "Off"
+              - "Manual"
+              - "Romantic Campfire"
+              - "Cinema"
+              - "Gaming"
+              - "Maintenance"
+              - "TV Lift Show"
+    sequence:
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'Off' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Manual"
+
+              - service: light.turn_off
+                target:
+                  entity_id:
+                    - light.sideboard_ambient
+                    - light.cabinet_glass_edge
+                    - light.cabinet_inner_diffuser
+
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'Manual' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Manual"
+
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'Romantic Campfire' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Fireplace"
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_intensity
+                data:
+                  value: 55
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_speed
+                data:
+                  value: 35
+
+              - service: cover.close_cover
+                target:
+                  entity_id: cover.tv_lift
+
+              - service: light.turn_on
+                target:
+                  entity_id:
+                    - light.sideboard_ambient
+                    - light.cabinet_glass_edge
+                    - light.cabinet_inner_diffuser
+                data:
+                  brightness_pct: 45
+
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'Cinema' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Cinema"
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_intensity
+                data:
+                  value: 25
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_speed
+                data:
+                  value: 10
+
+              - service: cover.open_cover
+                target:
+                  entity_id: cover.tv_lift
+
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'Gaming' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Aurora"
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_intensity
+                data:
+                  value: 70
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_speed
+                data:
+                  value: 50
+
+              - service: cover.open_cover
+                target:
+                  entity_id: cover.tv_lift
+
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'Maintenance' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Maintenance"
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_intensity
+                data:
+                  value: 100
+
+              - service: light.turn_on
+                target:
+                  entity_id:
+                    - light.sideboard_ambient
+                    - light.cabinet_glass_edge
+                    - light.cabinet_inner_diffuser
+                data:
+                  brightness_pct: 100
+
+          - conditions:
+              - condition: template
+                value_template: "{{ mode == 'TV Lift Show' }}"
+            sequence:
+              - service: select.select_option
+                target:
+                  entity_id: select.livingroom_light_scene
+                data:
+                  option: "Lift Show"
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_intensity
+                data:
+                  value: 75
+
+              - service: number.set_value
+                target:
+                  entity_id: number.livingroom_effect_speed
+                data:
+                  value: 45
+
+              - service: cover.open_cover
+                target:
+                  entity_id: cover.tv_lift
+
+automation:
+  - id: livingroom_mode_apply_from_dropdown
+    alias: "Living Room: Apply Selected Mode"
+    mode: restart
+    trigger:
+      - platform: state
+        entity_id: input_select.livingroom_mode
+    action:
+      - service: script.livingroom_set_mode
+        data:
+          mode: "{{ states('input_select.livingroom_mode') }}"
+
+  - id: livingroom_lift_fault_forces_fault_light
+    alias: "Living Room: Lift Fault Light Warning"
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: binary_sensor.tv_lift_fault
+        to: "on"
+    action:
+      - service: select.select_option
+        target:
+          entity_id: select.livingroom_light_scene
+        data:
+          option: "Fault"

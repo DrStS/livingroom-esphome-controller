@@ -1,0 +1,48 @@
+# ESPHome build artifacts
+.esphome/
+*.bin
+*.elf
+*.map
+*.ota.bin
+*.factory.bin
+
+# Secrets / local credentials
+secrets.yaml
+**/secrets.yaml
+*.secret.yaml
+.env
+.env.*
+
+# Home Assistant runtime/local files
+.storage/
+.cloud/
+.google.token
+.uuid
+known_devices.yaml
+home-assistant_v2.db*
+home-assistant.log*
+deps/
+tts/
+www/community/
+
+# Python / tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# CMake / C++ local build
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

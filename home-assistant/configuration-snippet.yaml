@@ -1,0 +1,14 @@
+# Add this to /config/configuration.yaml
+
+homeassistant:
+  packages: !include_dir_named packages
+
+lovelace:
+  mode: yaml
+  dashboards:
+    livingroom-dashboard:
+      mode: yaml
+      title: Living Room
+      icon: mdi:sofa
+      show_in_sidebar: true
+      filename: dashboards/livingroom.yaml

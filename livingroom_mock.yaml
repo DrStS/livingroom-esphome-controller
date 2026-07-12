@@ -1,0 +1,397 @@
+substitutions:
+  device_name: wohnzimmer-controller-mock
+  friendly_name: Wohnzimmer Controller Mock
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  project:
+    name: sicklinger.livingroom_controller_mock
+    version: "0.1.0"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret wohnzimmer_api_key
+
+ota:
+  - platform: esphome
+    password: !secret wohnzimmer_ota_password
+
+# Mock läuft auf dem Waveshare ESP32-S3-ETH/PoE ohne angeschlossene Peripherie.
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+globals:
+  - id: mock_lift_position
+    type: float
+    restore_value: yes
+    initial_value: "35.0"
+
+  - id: mock_lift_target
+    type: float
+    restore_value: no
+    initial_value: "35.0"
+
+  - id: mock_lift_moving
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+  - id: mock_lift_homed
+    type: bool
+    restore_value: yes
+    initial_value: "true"
+
+  - id: mock_lift_fault
+    type: bool
+    restore_value: yes
+    initial_value: "false"
+
+  - id: mock_fan_pwm
+    type: float
+    restore_value: no
+    initial_value: "0.25"
+
+output:
+  # RGBW Mock Outputs: erzeugen echte Light-Entities ohne Hardware-Pins.
+  - platform: template
+    id: out_sideboard_r
+    type: float
+    write_action: []
+  - platform: template
+    id: out_sideboard_g
+    type: float
+    write_action: []
+  - platform: template
+    id: out_sideboard_b
+    type: float
+    write_action: []
+  - platform: template
+    id: out_sideboard_w
+    type: float
+    write_action: []
+
+  - platform: template
+    id: out_glass_r
+    type: float
+    write_action: []
+  - platform: template
+    id: out_glass_g
+    type: float
+    write_action: []
+  - platform: template
+    id: out_glass_b
+    type: float
+    write_action: []
+  - platform: template
+    id: out_glass_w
+    type: float
+    write_action: []
+
+  - platform: template
+    id: out_inner_r
+    type: float
+    write_action: []
+  - platform: template
+    id: out_inner_g
+    type: float
+    write_action: []
+  - platform: template
+    id: out_inner_b
+    type: float
+    write_action: []
+  - platform: template
+    id: out_inner_w
+    type: float
+    write_action: []
+
+light:
+  - platform: rgbw
+    id: light_sideboard_ambient
+    name: "Sideboard Ambient"
+    red: out_sideboard_r
+    green: out_sideboard_g
+    blue: out_sideboard_b
+    white: out_sideboard_w
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: rgbw
+    id: light_cabinet_glass_edge
+    name: "Cabinet Glass Edge"
+    red: out_glass_r
+    green: out_glass_g
+    blue: out_glass_b
+    white: out_glass_w
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: rgbw
+    id: light_cabinet_inner_diffuser
+    name: "Cabinet Inner Diffuser"
+    red: out_inner_r
+    green: out_inner_g
+    blue: out_inner_b
+    white: out_inner_w
+    restore_mode: RESTORE_DEFAULT_OFF
+
+cover:
+  - platform: template
+    id: tv_lift
+    name: "TV Lift"
+    device_class: shade
+    has_position: true
+    optimistic: false
+    lambda: |-
+      return id(mock_lift_position) / 100.0f;
+    open_action:
+      - lambda: |-
+          if (!id(mock_lift_fault)) {
+            id(mock_lift_target) = 100.0f;
+            id(mock_lift_moving) = true;
+          }
+    close_action:
+      - lambda: |-
+          if (!id(mock_lift_fault)) {
+            id(mock_lift_target) = 0.0f;
+            id(mock_lift_moving) = true;
+          }
+    stop_action:
+      - lambda: |-
+          id(mock_lift_target) = id(mock_lift_position);
+          id(mock_lift_moving) = false;
+    position_action:
+      - lambda: |-
+          if (!id(mock_lift_fault)) {
+            id(mock_lift_target) = pos * 100.0f;
+            id(mock_lift_moving) = true;
+          }
+
+sensor:
+  - platform: template
+    id: tv_lift_position_percent
+    name: "TV Lift Position Percent"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: 1s
+    lambda: |-
+      return id(mock_lift_position);
+
+  - platform: template
+    id: tv_lift_position_pulses
+    name: "TV Lift Position Pulses"
+    entity_category: diagnostic
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: |-
+      return id(mock_lift_position) * 9.4f;
+
+  - platform: template
+    id: rail_12v_voltage
+    name: "Rail 12V Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: |-
+      return 12.15f;
+
+  - platform: template
+    id: rail_12v_current
+    name: "Rail 12V Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: |-
+      if (id(mock_lift_moving)) return 6.4f;
+      return 0.25f;
+
+  - platform: template
+    id: rail_12v_power
+    name: "Rail 12V Power"
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: |-
+      return id(rail_12v_voltage).state * id(rail_12v_current).state;
+
+  - platform: template
+    id: rail_5v_voltage
+    name: "Rail 5V Voltage"
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: |-
+      return 5.08f;
+
+  - platform: template
+    id: rail_5v_current
+    name: "Rail 5V Current"
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: |-
+      return 1.2f;
+
+  - platform: template
+    id: rail_5v_power
+    name: "Rail 5V Power"
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    update_interval: 2s
+    lambda: |-
+      return id(rail_5v_voltage).state * id(rail_5v_current).state;
+
+  - platform: template
+    id: av_receiver_temperature
+    name: "AV Receiver Temperature"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 5s
+    lambda: |-
+      return 36.5f + (id(mock_fan_pwm) * 8.0f);
+
+  - platform: template
+    id: cabinet_temperature
+    name: "Cabinet Temperature"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 5s
+    lambda: |-
+      return 31.0f;
+
+  - platform: template
+    id: livingroom_temperature
+    name: "Livingroom Temperature"
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    update_interval: 10s
+    lambda: |-
+      return 23.4f;
+
+  - platform: template
+    id: livingroom_humidity
+    name: "Livingroom Humidity"
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    update_interval: 10s
+    lambda: |-
+      return 48.0f;
+
+  - platform: template
+    id: av_fan_rpm
+    name: "AV Fan RPM"
+    unit_of_measurement: "rpm"
+    accuracy_decimals: 0
+    update_interval: 2s
+    lambda: |-
+      return id(mock_fan_pwm) * 2200.0f;
+
+binary_sensor:
+  - platform: template
+    id: tv_lift_homed
+    name: "TV Lift Homed"
+    lambda: |-
+      return id(mock_lift_homed);
+
+  - platform: template
+    id: tv_lift_fault
+    name: "TV Lift Fault"
+    device_class: problem
+    lambda: |-
+      return id(mock_lift_fault);
+
+button:
+  - platform: template
+    id: tv_lift_reference
+    name: "TV Lift Reference"
+    on_press:
+      - lambda: |-
+          id(mock_lift_position) = 0.0f;
+          id(mock_lift_target) = 0.0f;
+          id(mock_lift_homed) = true;
+          id(mock_lift_fault) = false;
+          id(mock_lift_moving) = false;
+
+  - platform: template
+    id: tv_lift_clear_fault
+    name: "TV Lift Clear Fault"
+    on_press:
+      - lambda: |-
+          id(mock_lift_fault) = false;
+
+  - platform: template
+    id: tv_lift_simulate_fault
+    name: "TV Lift Simulate Fault"
+    entity_category: diagnostic
+    on_press:
+      - lambda: |-
+          id(mock_lift_fault) = true;
+          id(mock_lift_moving) = false;
+
+select:
+  - platform: template
+    id: livingroom_light_scene
+    name: "Livingroom Light Scene"
+    optimistic: true
+    options:
+      - Manual
+      - Cinema
+      - Fireplace
+      - Aurora
+      - Sunset
+      - Glass Trace
+      - Lift Show
+      - Maintenance
+      - Fault
+    initial_option: Manual
+
+number:
+  - platform: template
+    id: livingroom_effect_intensity
+    name: "Livingroom Effect Intensity"
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 60
+
+  - platform: template
+    id: livingroom_effect_speed
+    name: "Livingroom Effect Speed"
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 35
+
+interval:
+  - interval: 500ms
+    then:
+      - lambda: |-
+          if (id(mock_lift_moving)) {
+            float delta = id(mock_lift_target) - id(mock_lift_position);
+            if (fabsf(delta) < 0.8f) {
+              id(mock_lift_position) = id(mock_lift_target);
+              id(mock_lift_moving) = false;
+            } else {
+              id(mock_lift_position) += (delta > 0.0f ? 0.8f : -0.8f);
+            }
+          }

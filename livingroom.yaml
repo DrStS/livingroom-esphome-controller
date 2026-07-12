@@ -1,0 +1,284 @@
+substitutions:
+  device_name: wohnzimmer-controller
+  friendly_name: Wohnzimmer Controller
+
+packages:
+  pins: !include config/pins.yaml
+  hw: !include config/hardware.yaml
+
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  project:
+    name: sicklinger.livingroom_controller
+    version: "0.1.0"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+external_components:
+  - source:
+      type: local
+      path: components
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret wohnzimmer_api_key
+
+ota:
+  - platform: esphome
+    password: !secret wohnzimmer_ota_password
+
+ethernet:
+  type: W5500
+  clk_pin: ${pin_eth_clk}
+  mosi_pin: ${pin_eth_mosi}
+  miso_pin: ${pin_eth_miso}
+  cs_pin: ${pin_eth_cs}
+  interrupt_pin: ${pin_eth_interrupt}
+  reset_pin: ${pin_eth_reset}
+
+i2c:
+  id: bus_i2c
+  sda: ${pin_i2c_sda}
+  scl: ${pin_i2c_scl}
+  scan: true
+  frequency: 400kHz
+
+one_wire:
+  - platform: gpio
+    pin: ${pin_onewire}
+    id: bus_onewire
+
+output:
+  - platform: ledc
+    id: out_motor_rpwm
+    pin: ${pin_motor_rpwm}
+    frequency: ${motor_pwm_frequency}
+  - platform: ledc
+    id: out_motor_lpwm
+    pin: ${pin_motor_lpwm}
+    frequency: ${motor_pwm_frequency}
+  - platform: ledc
+    id: out_fan_pwm
+    pin: ${pin_fan_pwm}
+    frequency: 25000 Hz
+
+living_room:
+  id: lr
+  motor:
+    rpwm_output: out_motor_rpwm
+    lpwm_output: out_motor_lpwm
+    r_en_pin: ${pin_motor_ren}
+    l_en_pin: ${pin_motor_len}
+    encoder_a_pin: ${pin_encoder_a}
+    encoder_b_pin: ${pin_encoder_b}
+    endstop_top_pin: ${pin_endstop_top}
+    endstop_bottom_pin: ${pin_endstop_bottom}
+    top_position_pulses: ${lift_top_position_pulses}
+    slow_zone_pulses: ${lift_slow_zone_pulses}
+    ramp_ms: ${lift_ramp_ms}
+    cruise_duty_up: ${lift_cruise_duty_up}
+    cruise_duty_down: ${lift_cruise_duty_down}
+    homing_duty: ${lift_homing_duty}
+
+cover:
+  - platform: template
+    id: tv_lift
+    name: "TV Lift"
+    device_class: shade
+    has_position: true
+    optimistic: false
+    lambda: |-
+      return id(lr).cover_position();
+    open_action:
+      - lambda: |-
+          id(lr).command_open();
+    close_action:
+      - lambda: |-
+          id(lr).command_close();
+    stop_action:
+      - lambda: |-
+          id(lr).command_stop();
+    position_action:
+      - lambda: |-
+          id(lr).command_set_position(pos);
+
+light:
+  - platform: esp32_rmt_led_strip
+    id: light_sideboard_ambient
+    name: "Sideboard Ambient"
+    pin: ${pin_led_sideboard}
+    num_leds: ${led_sideboard_pixels}
+    rgb_order: GRBW
+    chipset: ws2812
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: esp32_rmt_led_strip
+    id: light_cabinet_glass_edge
+    name: "Cabinet Glass Edge"
+    pin: ${pin_led_glass_edge}
+    num_leds: ${led_glass_edge_pixels}
+    rgb_order: GRBW
+    chipset: ws2812
+    restore_mode: RESTORE_DEFAULT_OFF
+  - platform: esp32_rmt_led_strip
+    id: light_cabinet_inner_diffuser
+    name: "Cabinet Inner Diffuser"
+    pin: ${pin_led_inner_diffuser}
+    num_leds: ${led_inner_diffuser_pixels}
+    rgb_order: GRBW
+    chipset: ws2812
+    restore_mode: RESTORE_DEFAULT_OFF
+
+sensor:
+  - platform: ina226
+    address: ${ina226_12v_address}
+    shunt_resistance: ${ina226_12v_shunt}
+    max_current: ${ina226_12v_max_current}
+    adc_time: 1100us
+    adc_averaging: 128
+    update_interval: 2s
+    current:
+      name: "Rail 12V Current"
+      id: rail_12v_current
+    power:
+      name: "Rail 12V Power"
+      id: rail_12v_power
+    bus_voltage:
+      name: "Rail 12V Voltage"
+      id: rail_12v_voltage
+    shunt_voltage:
+      name: "Rail 12V Shunt Voltage"
+      id: rail_12v_shunt_voltage
+      entity_category: diagnostic
+
+  - platform: ina226
+    address: ${ina226_5v_address}
+    shunt_resistance: ${ina226_5v_shunt}
+    max_current: ${ina226_5v_max_current}
+    adc_time: 1100us
+    adc_averaging: 128
+    update_interval: 2s
+    current:
+      name: "Rail 5V Current"
+      id: rail_5v_current
+    power:
+      name: "Rail 5V Power"
+      id: rail_5v_power
+    bus_voltage:
+      name: "Rail 5V Voltage"
+      id: rail_5v_voltage
+    shunt_voltage:
+      name: "Rail 5V Shunt Voltage"
+      id: rail_5v_shunt_voltage
+      entity_category: diagnostic
+
+  - platform: dallas_temp
+    name: "AV Receiver Temperature"
+    id: av_receiver_temperature
+    address: ${ds18b20_av_address}
+    update_interval: 10s
+  - platform: dallas_temp
+    name: "Cabinet Temperature"
+    id: cabinet_temperature
+    address: ${ds18b20_cabinet_address}
+    update_interval: 10s
+  - platform: sht4x
+    temperature:
+      name: "Livingroom Temperature"
+      id: livingroom_temperature
+    humidity:
+      name: "Livingroom Humidity"
+      id: livingroom_humidity
+    address: ${sht45_address}
+    update_interval: 30s
+  - platform: pulse_counter
+    id: av_fan_rpm
+    name: "AV Fan RPM"
+    pin:
+      number: ${pin_fan_tach}
+      mode:
+        input: true
+        pullup: false
+    unit_of_measurement: "rpm"
+    update_interval: 5s
+    filters:
+      - multiply: 0.5
+  - platform: template
+    id: tv_lift_position_pulses
+    name: "TV Lift Position Pulses"
+    entity_category: diagnostic
+    update_interval: 1s
+    lambda: |-
+      return id(lr).position_pulses();
+  - platform: template
+    id: tv_lift_position_percent
+    name: "TV Lift Position Percent"
+    unit_of_measurement: "%"
+    update_interval: 1s
+    lambda: |-
+      return id(lr).position_percent();
+
+binary_sensor:
+  - platform: template
+    name: "TV Lift Homed"
+    id: tv_lift_homed
+    lambda: |-
+      return id(lr).homed();
+  - platform: template
+    name: "TV Lift Fault"
+    id: tv_lift_fault
+    device_class: problem
+    lambda: |-
+      return id(lr).faulted();
+
+button:
+  - platform: template
+    name: "TV Lift Reference"
+    id: tv_lift_reference
+    on_press:
+      - lambda: |-
+          id(lr).command_reference();
+  - platform: template
+    name: "TV Lift Clear Fault"
+    id: tv_lift_clear_fault
+    on_press:
+      - lambda: |-
+          id(lr).command_clear_fault();
+
+select:
+  - platform: template
+    name: "Livingroom Light Scene"
+    id: livingroom_light_scene
+    optimistic: true
+    options: [Manual, Cinema, Fireplace, Aurora, Sunset, Glass Trace, Lift Show, Maintenance, Fault]
+    initial_option: Manual
+
+number:
+  - platform: template
+    name: "Livingroom Effect Intensity"
+    id: livingroom_effect_intensity
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 60
+  - platform: template
+    name: "Livingroom Effect Speed"
+    id: livingroom_effect_speed
+    optimistic: true
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 35
