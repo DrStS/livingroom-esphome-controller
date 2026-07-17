@@ -4,51 +4,101 @@ views:
     path: wohnzimmer
     icon: mdi:sofa
     cards:
+      - type: tile
+        entity: cover.wohnzimmer_controller_tv_lift
+        name: TV-Lift
+        features:
+          - type: cover-open-close
+          - type: cover-position
+
       - type: entities
         title: TV-Lift
         entities:
-          - entity: cover.tv_lift
-          - entity: sensor.tv_lift_position_percent
-          - entity: sensor.tv_lift_position_pulses
-          - entity: binary_sensor.tv_lift_homed
-          - entity: binary_sensor.tv_lift_fault
-          - entity: button.tv_lift_reference
-          - entity: button.tv_lift_clear_fault
+          - entity: cover.wohnzimmer_controller_tv_lift
+          - entity: sensor.wohnzimmer_controller_tv_lift_position_percent
+          - entity: sensor.wohnzimmer_controller_tv_lift_position_pulses
+          - entity: binary_sensor.wohnzimmer_controller_tv_lift_homed
+          - entity: binary_sensor.wohnzimmer_controller_tv_lift_fault
+          - entity: button.wohnzimmer_controller_tv_lift_reference
+          - entity: button.wohnzimmer_controller_tv_lift_clear_fault
 
       - type: entities
         title: Licht
         entities:
-          - entity: light.sideboard_ambient
-          - entity: light.cabinet_glass_edge
-          - entity: light.cabinet_inner_diffuser
-          - entity: select.livingroom_light_scene
-          - entity: number.livingroom_effect_intensity
-          - entity: number.livingroom_effect_speed
+          - entity: light.wohnzimmer_controller_sideboard_ambient
+          - entity: light.wohnzimmer_controller_cabinet_glass_edge
+          - entity: light.wohnzimmer_controller_cabinet_inner_diffuser
+          - entity: select.wohnzimmer_controller_livingroom_light_scene
+          - entity: number.wohnzimmer_controller_livingroom_effect_intensity
+          - entity: number.wohnzimmer_controller_livingroom_effect_speed
 
       - type: entities
         title: Rails / Leistung
         entities:
-          - entity: sensor.rail_12v_voltage
-          - entity: sensor.rail_12v_current
-          - entity: sensor.rail_12v_power
-          - entity: sensor.rail_5v_voltage
-          - entity: sensor.rail_5v_current
-          - entity: sensor.rail_5v_power
+          - entity: sensor.wohnzimmer_controller_rail_12v_voltage
+          - entity: sensor.wohnzimmer_controller_rail_12v_current
+          - entity: sensor.wohnzimmer_controller_rail_12v_power
+          - entity: sensor.wohnzimmer_controller_rail_5v_voltage
+          - entity: sensor.wohnzimmer_controller_rail_5v_current
+          - entity: sensor.wohnzimmer_controller_rail_5v_power
 
       - type: entities
         title: Klima / Lüfter
         entities:
-          - entity: sensor.av_receiver_temperature
-          - entity: sensor.cabinet_temperature
-          - entity: sensor.livingroom_temperature
-          - entity: sensor.livingroom_humidity
-          - entity: sensor.av_fan_rpm
+          - entity: sensor.wohnzimmer_controller_av_receiver_temperature
+          - entity: sensor.wohnzimmer_controller_cabinet_temperature
+          - entity: sensor.wohnzimmer_controller_livingroom_temperature
+          - entity: sensor.wohnzimmer_controller_livingroom_humidity
+          - entity: sensor.wohnzimmer_controller_av_fan_rpm
 
       - type: history-graph
         title: Lift / Rails
         hours_to_show: 2
         entities:
-          - sensor.tv_lift_position_percent
-          - sensor.rail_12v_current
-          - sensor.rail_5v_current
-          - sensor.av_fan_rpm
+          - sensor.wohnzimmer_controller_tv_lift_position_percent
+          - sensor.wohnzimmer_controller_rail_12v_current
+          - sensor.wohnzimmer_controller_rail_5v_current
+          - sensor.wohnzimmer_controller_av_fan_rpm
+
+      - type: history-graph
+        title: Rail 12V (Verlauf)
+        hours_to_show: 6
+        entities:
+          - sensor.wohnzimmer_controller_rail_12v_voltage
+          - sensor.wohnzimmer_controller_rail_12v_current
+          - sensor.wohnzimmer_controller_rail_12v_power
+
+      - type: history-graph
+        title: Rail 5V (Verlauf)
+        hours_to_show: 6
+        entities:
+          - sensor.wohnzimmer_controller_rail_5v_voltage
+          - sensor.wohnzimmer_controller_rail_5v_current
+          - sensor.wohnzimmer_controller_rail_5v_power
+
+      - type: history-graph
+        title: Temperaturen (Verlauf)
+        hours_to_show: 12
+        entities:
+          - sensor.wohnzimmer_controller_av_receiver_temperature
+          - sensor.wohnzimmer_controller_cabinet_temperature
+          - sensor.wohnzimmer_controller_livingroom_temperature
+
+      - type: history-graph
+        title: Luftfeuchte (Verlauf)
+        hours_to_show: 12
+        entities:
+          - sensor.wohnzimmer_controller_livingroom_humidity
+
+      - type: history-graph
+        title: Luefter-Drehzahl (Verlauf)
+        hours_to_show: 6
+        entities:
+          - sensor.wohnzimmer_controller_av_fan_rpm
+
+      - type: history-graph
+        title: TV-Lift Position (Verlauf)
+        hours_to_show: 6
+        entities:
+          - sensor.wohnzimmer_controller_tv_lift_position_percent
+          - sensor.wohnzimmer_controller_tv_lift_position_pulses

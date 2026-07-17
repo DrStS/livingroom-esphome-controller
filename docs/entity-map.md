@@ -1,8 +1,10 @@
 # Entity Map
 
-Expected entity IDs after first mock install. Home Assistant may add a suffix if a duplicate already exists.
+Actual entity IDs of the ESPHome device. Home Assistant prepends the device
+name (`wohnzimmer-controller`) to every ESPHome entity, so all controller IDs
+carry the `wohnzimmer_controller_` prefix.
 
-## Whole-room mode
+## Whole-room mode (Home Assistant helpers)
 
 | Entity | Type | Purpose |
 |---|---|---|
@@ -13,28 +15,31 @@ Expected entity IDs after first mock install. Home Assistant may add a suffix if
 
 | Entity | Type | Hardware later |
 |---|---|---|
-| `cover.tv_lift` | Cover | LiftController + motor driver + encoder |
-| `sensor.tv_lift_position_percent` | Sensor | Encoder / persisted position |
-| `sensor.tv_lift_position_pulses` | Sensor | Encoder |
-| `binary_sensor.tv_lift_homed` | Binary Sensor | Endstop / homing state |
-| `binary_sensor.tv_lift_fault` | Binary Sensor | LiftController fault state |
-| `button.tv_lift_reference` | Button | Homing/reference run |
-| `button.tv_lift_clear_fault` | Button | Clears fault |
-| `button.tv_lift_simulate_fault` | Button | Mock only |
-| `light.sideboard_ambient` | RGBW Light | LED DATA through 74AHCT125 |
-| `light.cabinet_glass_edge` | RGBW Light | LED DATA through 74AHCT125 |
-| `light.cabinet_inner_diffuser` | RGBW Light | LED DATA through 74AHCT125 |
-| `select.livingroom_light_scene` | Select | ESP LED mode |
-| `number.livingroom_effect_intensity` | Number | ESP LED scene intensity |
-| `number.livingroom_effect_speed` | Number | ESP LED scene speed |
-| `sensor.rail_12v_voltage` | Sensor | INA226 12 V rail |
-| `sensor.rail_12v_current` | Sensor | INA226 12 V rail |
-| `sensor.rail_12v_power` | Sensor | INA226 12 V rail |
-| `sensor.rail_5v_voltage` | Sensor | INA226 5 V rail |
-| `sensor.rail_5v_current` | Sensor | INA226 5 V rail |
-| `sensor.rail_5v_power` | Sensor | INA226 5 V rail |
-| `sensor.av_receiver_temperature` | Sensor | DS18B20 |
-| `sensor.cabinet_temperature` | Sensor | DS18B20 |
-| `sensor.livingroom_temperature` | Sensor | SHT45 |
-| `sensor.livingroom_humidity` | Sensor | SHT45 |
-| `sensor.av_fan_rpm` | Sensor | Fan tacho |
+| `cover.wohnzimmer_controller_tv_lift` | Cover | LiftController + motor driver + encoder |
+| `sensor.wohnzimmer_controller_tv_lift_position_percent` | Sensor | Encoder / persisted position |
+| `sensor.wohnzimmer_controller_tv_lift_position_pulses` | Sensor | Encoder |
+| `binary_sensor.wohnzimmer_controller_tv_lift_homed` | Binary Sensor | Endstop / homing state |
+| `binary_sensor.wohnzimmer_controller_tv_lift_fault` | Binary Sensor | LiftController fault state |
+| `button.wohnzimmer_controller_tv_lift_reference` | Button | Homing/reference run |
+| `button.wohnzimmer_controller_tv_lift_clear_fault` | Button | Clears fault |
+| `light.wohnzimmer_controller_sideboard_ambient` | RGBW Light | LED DATA through 74AHCT125 |
+| `light.wohnzimmer_controller_cabinet_glass_edge` | RGBW Light | LED DATA through 74AHCT125 |
+| `light.wohnzimmer_controller_cabinet_inner_diffuser` | RGBW Light | LED DATA through 74AHCT125 |
+| `select.wohnzimmer_controller_livingroom_light_scene` | Select | ESP LED mode |
+| `number.wohnzimmer_controller_livingroom_effect_intensity` | Number | ESP LED scene intensity |
+| `number.wohnzimmer_controller_livingroom_effect_speed` | Number | ESP LED scene speed |
+| `sensor.wohnzimmer_controller_rail_12v_voltage` | Sensor | INA226 12 V rail |
+| `sensor.wohnzimmer_controller_rail_12v_current` | Sensor | INA226 12 V rail |
+| `sensor.wohnzimmer_controller_rail_12v_power` | Sensor | INA226 12 V rail |
+| `sensor.wohnzimmer_controller_rail_5v_voltage` | Sensor | INA226 5 V rail |
+| `sensor.wohnzimmer_controller_rail_5v_current` | Sensor | INA226 5 V rail |
+| `sensor.wohnzimmer_controller_rail_5v_power` | Sensor | INA226 5 V rail |
+| `sensor.wohnzimmer_controller_av_receiver_temperature` | Sensor | DS18B20 |
+| `sensor.wohnzimmer_controller_cabinet_temperature` | Sensor | DS18B20 |
+| `sensor.wohnzimmer_controller_livingroom_temperature` | Sensor | SHT45 |
+| `sensor.wohnzimmer_controller_livingroom_humidity` | Sensor | SHT45 |
+| `sensor.wohnzimmer_controller_av_fan_rpm` | Sensor | Fan tacho |
+
+> Note: entity IDs are currently served by the hardware-free mock in
+> `livingroom.yaml`. They stay identical when subsystems are switched to real
+> hardware, so Home Assistant dashboards/automations remain valid.

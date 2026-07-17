@@ -1,14 +1,33 @@
+# =============================================================================
+# WOHNZIMMER CONTROLLER -- AKTUELL HARDWAREFREIER MOCK
+# -----------------------------------------------------------------------------
+# Diese Datei laeuft mit dem FINALEN Namen (wohnzimmer-controller) und erzeugt
+# EXAKT die endgueltigen Home-Assistant-Entities, aber vorerst OHNE echte
+# Hardware (Template-Sensoren/-Outputs statt INA226/Motor/LED/DS18B20/SHT4x).
+#
+# Ziel: Home Assistant JETZT komplett konfigurieren. Danach bauen wir Abschnitt
+# fuer Abschnitt auf echte Hardware um -- jeweils an den mit "TODO HARDWARE"
+# markierten Stellen. Die vollstaendige Hardware-Referenz liegt im ersten
+# Commit:  git show HEAD:livingroom.yaml
+# =============================================================================
+
 substitutions:
   device_name: wohnzimmer-controller
-  friendly_name: Wohnzimmer Controller
+  # Hinweis: Home Assistant haengt den Geraetenamen IMMER als Praefix an die
+  # Entity-IDs an (has_entity_name), unabhaengig von friendly_name. Die IDs
+  # heissen daher cover.wohnzimmer_controller_tv_lift usw. -- die zentralen
+  # Dashboards und das Package verwenden genau dieses Praefix.
+  # friendly_name ist optional (nur schoenere Anzeigenamen) und aendert die IDs
+  # nicht; aktuell bewusst weggelassen.
 
 packages:
+  # Substitutions bleiben bereit fuer den schrittweisen Hardware-Umbau.
+  # Aktuell wird nur pin_eth_* (Ethernet) tatsaechlich referenziert.
   pins: !include config/pins.yaml
   hw: !include config/hardware.yaml
 
 esphome:
   name: ${device_name}
-  friendly_name: ${friendly_name}
   project:
     name: sicklinger.livingroom_controller
     version: "0.1.0"
@@ -24,10 +43,11 @@ psram:
   mode: octal
   speed: 80MHz
 
-external_components:
-  - source:
-      type: local
-      path: components
+# TODO HARDWARE (Motor/Lift): externes living_room-Component wieder aktivieren.
+# external_components:
+#   - source:
+#       type: local
+#       path: components
 
 logger:
   level: INFO
@@ -49,50 +69,152 @@ ethernet:
   interrupt_pin: ${pin_eth_interrupt}
   reset_pin: ${pin_eth_reset}
 
-i2c:
-  id: bus_i2c
-  sda: ${pin_i2c_sda}
-  scl: ${pin_i2c_scl}
-  scan: true
-  frequency: 400kHz
+# =============================================================================
+# MOCK-ZUSTAND (nur waehrend Mock-Phase; entfaellt beim Umbau auf living_room)
+# =============================================================================
+globals:
+  - id: mock_lift_position
+    type: float
+    restore_value: yes
+    initial_value: "35.0"
+  - id: mock_lift_target
+    type: float
+    restore_value: no
+    initial_value: "35.0"
+  - id: mock_lift_moving
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: mock_lift_homed
+    type: bool
+    restore_value: yes
+    initial_value: "true"
+  - id: mock_lift_fault
+    type: bool
+    restore_value: yes
+    initial_value: "false"
 
-one_wire:
-  - platform: gpio
-    pin: ${pin_onewire}
-    id: bus_onewire
-
+# =============================================================================
+# LICHTER (3x RGBW)
+# TODO HARDWARE (LED): Template-Outputs entfernen und pro Licht auf
+#   platform: esp32_rmt_led_strip (pin: ${pin_led_*}, num_leds: ${led_*_pixels},
+#   rgb_order: GRBW, chipset: ws2812) umstellen. Namen unveraendert lassen!
+# =============================================================================
 output:
-  - platform: ledc
-    id: out_motor_rpwm
-    pin: ${pin_motor_rpwm}
-    frequency: ${motor_pwm_frequency}
-  - platform: ledc
-    id: out_motor_lpwm
-    pin: ${pin_motor_lpwm}
-    frequency: ${motor_pwm_frequency}
-  - platform: ledc
-    id: out_fan_pwm
-    pin: ${pin_fan_pwm}
-    frequency: 25000 Hz
+  - platform: template
+    id: out_sideboard_r
+    type: float
+    write_action: []
+  - platform: template
+    id: out_sideboard_g
+    type: float
+    write_action: []
+  - platform: template
+    id: out_sideboard_b
+    type: float
+    write_action: []
+  - platform: template
+    id: out_sideboard_w
+    type: float
+    write_action: []
 
-living_room:
-  id: lr
-  motor:
-    rpwm_output: out_motor_rpwm
-    lpwm_output: out_motor_lpwm
-    r_en_pin: ${pin_motor_ren}
-    l_en_pin: ${pin_motor_len}
-    encoder_a_pin: ${pin_encoder_a}
-    encoder_b_pin: ${pin_encoder_b}
-    endstop_top_pin: ${pin_endstop_top}
-    endstop_bottom_pin: ${pin_endstop_bottom}
-    top_position_pulses: ${lift_top_position_pulses}
-    slow_zone_pulses: ${lift_slow_zone_pulses}
-    ramp_ms: ${lift_ramp_ms}
-    cruise_duty_up: ${lift_cruise_duty_up}
-    cruise_duty_down: ${lift_cruise_duty_down}
-    homing_duty: ${lift_homing_duty}
+  - platform: template
+    id: out_glass_edge_r
+    type: float
+    write_action: []
+  - platform: template
+    id: out_glass_edge_g
+    type: float
+    write_action: []
+  - platform: template
+    id: out_glass_edge_b
+    type: float
+    write_action: []
+  - platform: template
+    id: out_glass_edge_w
+    type: float
+    write_action: []
 
+  - platform: template
+    id: out_inner_diffuser_r
+    type: float
+    write_action: []
+  - platform: template
+    id: out_inner_diffuser_g
+    type: float
+    write_action: []
+  - platform: template
+    id: out_inner_diffuser_b
+    type: float
+    write_action: []
+  - platform: template
+    id: out_inner_diffuser_w
+    type: float
+    write_action: []
+
+light:
+  - platform: rgbw
+    id: light_sideboard_ambient
+    name: "Sideboard Ambient"
+    red: out_sideboard_r
+    green: out_sideboard_g
+    blue: out_sideboard_b
+    white: out_sideboard_w
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects: &scene_effects
+      # TODO HARDWARE (LED): Bei Umstieg auf esp32_rmt_led_strip diese Effekte
+      # durch addressable_* / addressable_lambda ersetzen (echtes Kaminfeuer,
+      # Lauflicht pro Pixel). Namen unveraendert lassen, dann bleibt die
+      # Szenen-Logik (script apply_light_scene) gueltig.
+      - flicker:
+          name: "Fireplace"
+          alpha: 90%
+          intensity: 28%
+      - random:
+          name: "Aurora"
+          transition_length: 6s
+          update_interval: 7s
+      - pulse:
+          name: "Lift Show"
+          transition_length: 1500ms
+          update_interval: 3s
+      - strobe:
+          name: "Fault"
+          colors:
+            - state: true
+              red: 100%
+              green: 0%
+              blue: 0%
+              white: 0%
+              brightness: 100%
+              duration: 400ms
+            - state: false
+              duration: 400ms
+  - platform: rgbw
+    id: light_cabinet_glass_edge
+    name: "Cabinet Glass Edge"
+    red: out_glass_edge_r
+    green: out_glass_edge_g
+    blue: out_glass_edge_b
+    white: out_glass_edge_w
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects: *scene_effects
+  - platform: rgbw
+    id: light_cabinet_inner_diffuser
+    name: "Cabinet Inner Diffuser"
+    red: out_inner_diffuser_r
+    green: out_inner_diffuser_g
+    blue: out_inner_diffuser_b
+    white: out_inner_diffuser_w
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects: *scene_effects
+
+# =============================================================================
+# TV-LIFT (Cover)
+# TODO HARDWARE (Motor/Lift): living_room-Component + LEDC-Outputs aktivieren
+#   und die Actions/Lambdas auf id(lr).command_* bzw. id(lr).cover_position()
+#   umstellen. Name "TV Lift" unveraendert lassen!
+# =============================================================================
 cover:
   - platform: template
     id: tv_lift
@@ -101,147 +223,192 @@ cover:
     has_position: true
     optimistic: false
     lambda: |-
-      return id(lr).cover_position();
+      return id(mock_lift_position) / 100.0f;
     open_action:
       - lambda: |-
-          id(lr).command_open();
+          if (!id(mock_lift_fault)) {
+            id(mock_lift_target) = 100.0f;
+            id(mock_lift_moving) = true;
+          }
     close_action:
       - lambda: |-
-          id(lr).command_close();
+          if (!id(mock_lift_fault)) {
+            id(mock_lift_target) = 0.0f;
+            id(mock_lift_moving) = true;
+          }
     stop_action:
       - lambda: |-
-          id(lr).command_stop();
+          id(mock_lift_target) = id(mock_lift_position);
+          id(mock_lift_moving) = false;
     position_action:
       - lambda: |-
-          id(lr).command_set_position(pos);
+          if (!id(mock_lift_fault)) {
+            id(mock_lift_target) = pos * 100.0f;
+            id(mock_lift_moving) = true;
+          }
 
-light:
-  - platform: esp32_rmt_led_strip
-    id: light_sideboard_ambient
-    name: "Sideboard Ambient"
-    pin: ${pin_led_sideboard}
-    num_leds: ${led_sideboard_pixels}
-    rgb_order: GRBW
-    chipset: ws2812
-    restore_mode: RESTORE_DEFAULT_OFF
-  - platform: esp32_rmt_led_strip
-    id: light_cabinet_glass_edge
-    name: "Cabinet Glass Edge"
-    pin: ${pin_led_glass_edge}
-    num_leds: ${led_glass_edge_pixels}
-    rgb_order: GRBW
-    chipset: ws2812
-    restore_mode: RESTORE_DEFAULT_OFF
-  - platform: esp32_rmt_led_strip
-    id: light_cabinet_inner_diffuser
-    name: "Cabinet Inner Diffuser"
-    pin: ${pin_led_inner_diffuser}
-    num_leds: ${led_inner_diffuser_pixels}
-    rgb_order: GRBW
-    chipset: ws2812
-    restore_mode: RESTORE_DEFAULT_OFF
-
+# =============================================================================
+# SENSOREN
+# TODO HARDWARE (Strom): rail_* auf platform: ina226 (${ina226_*}) umstellen.
+# TODO HARDWARE (Temp):   av/cabinet auf dallas_temp, livingroom auf sht4x.
+# TODO HARDWARE (Fan):    av_fan_rpm auf pulse_counter (${pin_fan_tach}).
+#   Alle Namen/Einheiten unveraendert lassen!
+# =============================================================================
 sensor:
-  - platform: ina226
-    address: ${ina226_12v_address}
-    shunt_resistance: ${ina226_12v_shunt}
-    max_current: ${ina226_12v_max_current}
-    adc_time: 1100us
-    adc_averaging: 128
+  # --- INA226 12V-Schiene (Mock) ---
+  - platform: template
+    name: "Rail 12V Current"
+    id: rail_12v_current
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
     update_interval: 2s
-    current:
-      name: "Rail 12V Current"
-      id: rail_12v_current
-    power:
-      name: "Rail 12V Power"
-      id: rail_12v_power
-    bus_voltage:
-      name: "Rail 12V Voltage"
-      id: rail_12v_voltage
-    shunt_voltage:
-      name: "Rail 12V Shunt Voltage"
-      id: rail_12v_shunt_voltage
-      entity_category: diagnostic
-
-  - platform: ina226
-    address: ${ina226_5v_address}
-    shunt_resistance: ${ina226_5v_shunt}
-    max_current: ${ina226_5v_max_current}
-    adc_time: 1100us
-    adc_averaging: 128
+    lambda: 'return id(mock_lift_moving) ? 3.2f : 1.4f;'
+  - platform: template
+    name: "Rail 12V Power"
+    id: rail_12v_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 2
     update_interval: 2s
-    current:
-      name: "Rail 5V Current"
-      id: rail_5v_current
-    power:
-      name: "Rail 5V Power"
-      id: rail_5v_power
-    bus_voltage:
-      name: "Rail 5V Voltage"
-      id: rail_5v_voltage
-    shunt_voltage:
-      name: "Rail 5V Shunt Voltage"
-      id: rail_5v_shunt_voltage
-      entity_category: diagnostic
+    lambda: 'return (id(mock_lift_moving) ? 3.2f : 1.4f) * 12.1f;'
+  - platform: template
+    name: "Rail 12V Voltage"
+    id: rail_12v_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: 'return 12.1f;'
+  - platform: template
+    name: "Rail 12V Shunt Voltage"
+    id: rail_12v_shunt_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 4
+    entity_category: diagnostic
+    update_interval: 2s
+    lambda: 'return (id(mock_lift_moving) ? 3.2f : 1.4f) * 0.001f;'
 
-  - platform: dallas_temp
+  # --- INA226 5V-Schiene (Mock) ---
+  - platform: template
+    name: "Rail 5V Current"
+    id: rail_5v_current
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 3
+    update_interval: 2s
+    lambda: 'return 2.1f;'
+  - platform: template
+    name: "Rail 5V Power"
+    id: rail_5v_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: 'return 2.1f * 5.05f;'
+  - platform: template
+    name: "Rail 5V Voltage"
+    id: rail_5v_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: 'return 5.05f;'
+  - platform: template
+    name: "Rail 5V Shunt Voltage"
+    id: rail_5v_shunt_voltage
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 4
+    entity_category: diagnostic
+    update_interval: 2s
+    lambda: 'return 2.1f * 0.001f;'
+
+  # --- Temperaturen / Feuchte (Mock) ---
+  - platform: template
     name: "AV Receiver Temperature"
     id: av_receiver_temperature
-    address: ${ds18b20_av_address}
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
     update_interval: 10s
-  - platform: dallas_temp
+    lambda: 'return 38.5f;'
+  - platform: template
     name: "Cabinet Temperature"
     id: cabinet_temperature
-    address: ${ds18b20_cabinet_address}
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
     update_interval: 10s
-  - platform: sht4x
-    temperature:
-      name: "Livingroom Temperature"
-      id: livingroom_temperature
-    humidity:
-      name: "Livingroom Humidity"
-      id: livingroom_humidity
-    address: ${sht45_address}
+    lambda: 'return 29.2f;'
+  - platform: template
+    name: "Livingroom Temperature"
+    id: livingroom_temperature
+    unit_of_measurement: "°C"
+    device_class: temperature
+    state_class: measurement
+    accuracy_decimals: 1
     update_interval: 30s
-  - platform: pulse_counter
-    id: av_fan_rpm
-    name: "AV Fan RPM"
-    pin:
-      number: ${pin_fan_tach}
-      mode:
-        input: true
-        pullup: false
-    unit_of_measurement: "rpm"
-    update_interval: 5s
-    filters:
-      - multiply: 0.5
+    lambda: 'return 22.4f;'
   - platform: template
-    id: tv_lift_position_pulses
-    name: "TV Lift Position Pulses"
-    entity_category: diagnostic
-    update_interval: 1s
-    lambda: |-
-      return id(lr).position_pulses();
-  - platform: template
-    id: tv_lift_position_percent
-    name: "TV Lift Position Percent"
+    name: "Livingroom Humidity"
+    id: livingroom_humidity
     unit_of_measurement: "%"
+    device_class: humidity
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 30s
+    lambda: 'return 45.0f;'
+
+  # --- Luefter-Drehzahl (Mock) ---
+  - platform: template
+    name: "AV Fan RPM"
+    id: av_fan_rpm
+    unit_of_measurement: "rpm"
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 5s
+    lambda: 'return 1200.0f;'
+
+  # --- Lift-Diagnose (Mock) ---
+  - platform: template
+    name: "TV Lift Position Pulses"
+    id: tv_lift_position_pulses
+    entity_category: diagnostic
+    state_class: measurement
+    accuracy_decimals: 0
     update_interval: 1s
-    lambda: |-
-      return id(lr).position_percent();
+    lambda: 'return id(mock_lift_position) / 100.0f * 940.0f;'
+  - platform: template
+    name: "TV Lift Position Percent"
+    id: tv_lift_position_percent
+    unit_of_measurement: "%"
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: 'return id(mock_lift_position);'
 
 binary_sensor:
   - platform: template
     name: "TV Lift Homed"
     id: tv_lift_homed
-    lambda: |-
-      return id(lr).homed();
+    lambda: 'return id(mock_lift_homed);'
   - platform: template
     name: "TV Lift Fault"
     id: tv_lift_fault
     device_class: problem
-    lambda: |-
-      return id(lr).faulted();
+    lambda: 'return id(mock_lift_fault);'
 
 button:
   - platform: template
@@ -249,13 +416,17 @@ button:
     id: tv_lift_reference
     on_press:
       - lambda: |-
-          id(lr).command_reference();
+          id(mock_lift_position) = 0.0f;
+          id(mock_lift_target) = 0.0f;
+          id(mock_lift_homed) = true;
+          id(mock_lift_fault) = false;
+          id(mock_lift_moving) = false;
   - platform: template
     name: "TV Lift Clear Fault"
     id: tv_lift_clear_fault
     on_press:
       - lambda: |-
-          id(lr).command_clear_fault();
+          id(mock_lift_fault) = false;
 
 select:
   - platform: template
@@ -264,6 +435,8 @@ select:
     optimistic: true
     options: [Manual, Cinema, Fireplace, Aurora, Sunset, Glass Trace, Lift Show, Maintenance, Fault]
     initial_option: Manual
+    on_value:
+      - script.execute: apply_light_scene
 
 number:
   - platform: template
@@ -274,6 +447,8 @@ number:
     max_value: 100
     step: 1
     initial_value: 60
+    on_value:
+      - script.execute: apply_light_scene
   - platform: template
     name: "Livingroom Effect Speed"
     id: livingroom_effect_speed
@@ -282,3 +457,91 @@ number:
     max_value: 100
     step: 1
     initial_value: 35
+    on_value:
+      - script.execute: apply_light_scene
+
+# =============================================================================
+# SZENEN-ENGINE (Mock)
+# Setzt Farbe/Weiss/Helligkeit + ESPHome-Effekt aller drei Lichter je nach
+# ausgewaehlter "Livingroom Light Scene". Intensity steuert die Helligkeit.
+# TODO HARDWARE (LED): Bei adressierbaren Strips hier zusaetzlich Speed und
+# per-Pixel-Effekte nutzen (addressable_lambda).
+# =============================================================================
+script:
+  - id: apply_light_scene
+    then:
+      - lambda: |-
+          auto set_light = [](light::LightState *l, float r, float g, float b,
+                              float w, float bri, const char *eff) {
+            auto call = l->turn_on();
+            call.set_rgb(r, g, b);
+            call.set_white(w);
+            call.set_brightness(bri < 0.02f ? 0.02f : bri);
+            call.set_effect(eff);
+            call.perform();
+          };
+          auto clear_eff = [](light::LightState *l) {
+            if (l->remote_values.is_on()) {
+              auto call = l->turn_on();
+              call.set_effect("None");
+              call.perform();
+            }
+          };
+          const std::string s = id(livingroom_light_scene).state;
+          const float bri = id(livingroom_effect_intensity).state / 100.0f;
+          if (s == "Manual") {
+            clear_eff(id(light_sideboard_ambient));
+            clear_eff(id(light_cabinet_glass_edge));
+            clear_eff(id(light_cabinet_inner_diffuser));
+          } else if (s == "Cinema") {
+            const float b2 = bri * 0.5f;
+            set_light(id(light_sideboard_ambient), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
+            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
+          } else if (s == "Fireplace") {
+            set_light(id(light_sideboard_ambient), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
+            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
+          } else if (s == "Aurora") {
+            set_light(id(light_sideboard_ambient), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
+            set_light(id(light_cabinet_glass_edge), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
+            set_light(id(light_cabinet_inner_diffuser), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
+          } else if (s == "Sunset") {
+            const float b2 = bri * 0.8f;
+            set_light(id(light_sideboard_ambient), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
+            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
+          } else if (s == "Glass Trace") {
+            set_light(id(light_cabinet_glass_edge), 0.0f, 0.4f, 1.0f, 0.0f, bri, "Lift Show");
+            set_light(id(light_sideboard_ambient), 0.0f, 0.2f, 0.5f, 0.0f, bri * 0.3f, "None");
+            set_light(id(light_cabinet_inner_diffuser), 0.0f, 0.2f, 0.5f, 0.0f, bri * 0.3f, "None");
+          } else if (s == "Lift Show") {
+            set_light(id(light_sideboard_ambient), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
+            set_light(id(light_cabinet_glass_edge), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
+            set_light(id(light_cabinet_inner_diffuser), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
+          } else if (s == "Maintenance") {
+            set_light(id(light_sideboard_ambient), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
+            set_light(id(light_cabinet_glass_edge), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
+            set_light(id(light_cabinet_inner_diffuser), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
+          } else if (s == "Fault") {
+            set_light(id(light_sideboard_ambient), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
+            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
+          }
+
+# =============================================================================
+# MOCK-BEWEGUNG: Lift-Position laeuft in Richtung Ziel (entfaellt beim Umbau).
+# =============================================================================
+interval:
+  - interval: 200ms
+    then:
+      - lambda: |-
+          if (id(mock_lift_moving)) {
+            float delta = id(mock_lift_target) - id(mock_lift_position);
+            if (fabsf(delta) < 0.8f) {
+              id(mock_lift_position) = id(mock_lift_target);
+              id(mock_lift_moving) = false;
+            } else {
+              id(mock_lift_position) += (delta > 0.0f ? 0.8f : -0.8f);
+            }
+          }

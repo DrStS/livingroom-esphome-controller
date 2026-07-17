@@ -9,6 +9,10 @@
 #
 # This package controls whole-room modes.
 # Fast LED effects and lift safety stay local on the ESP32.
+#
+# NOTE: The ESP32 entities carry the device-name prefix "wohnzimmer_controller_"
+# (Home Assistant prepends the device name to ESPHome entity IDs). The helpers
+# below (input_select, script) are HA-side and therefore stay unprefixed.
 
 input_select:
   livingroom_mode:
@@ -50,16 +54,16 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Manual"
 
               - service: light.turn_off
                 target:
                   entity_id:
-                    - light.sideboard_ambient
-                    - light.cabinet_glass_edge
-                    - light.cabinet_inner_diffuser
+                    - light.wohnzimmer_controller_sideboard_ambient
+                    - light.wohnzimmer_controller_cabinet_glass_edge
+                    - light.wohnzimmer_controller_cabinet_inner_diffuser
 
           - conditions:
               - condition: template
@@ -67,7 +71,7 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Manual"
 
@@ -77,32 +81,32 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Fireplace"
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_intensity
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
                 data:
                   value: 55
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_speed
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_speed
                 data:
                   value: 35
 
               - service: cover.close_cover
                 target:
-                  entity_id: cover.tv_lift
+                  entity_id: cover.wohnzimmer_controller_tv_lift
 
               - service: light.turn_on
                 target:
                   entity_id:
-                    - light.sideboard_ambient
-                    - light.cabinet_glass_edge
-                    - light.cabinet_inner_diffuser
+                    - light.wohnzimmer_controller_sideboard_ambient
+                    - light.wohnzimmer_controller_cabinet_glass_edge
+                    - light.wohnzimmer_controller_cabinet_inner_diffuser
                 data:
                   brightness_pct: 45
 
@@ -112,25 +116,25 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Cinema"
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_intensity
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
                 data:
                   value: 25
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_speed
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_speed
                 data:
                   value: 10
 
               - service: cover.open_cover
                 target:
-                  entity_id: cover.tv_lift
+                  entity_id: cover.wohnzimmer_controller_tv_lift
 
           - conditions:
               - condition: template
@@ -138,25 +142,25 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Aurora"
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_intensity
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
                 data:
                   value: 70
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_speed
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_speed
                 data:
                   value: 50
 
               - service: cover.open_cover
                 target:
-                  entity_id: cover.tv_lift
+                  entity_id: cover.wohnzimmer_controller_tv_lift
 
           - conditions:
               - condition: template
@@ -164,22 +168,22 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Maintenance"
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_intensity
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
                 data:
                   value: 100
 
               - service: light.turn_on
                 target:
                   entity_id:
-                    - light.sideboard_ambient
-                    - light.cabinet_glass_edge
-                    - light.cabinet_inner_diffuser
+                    - light.wohnzimmer_controller_sideboard_ambient
+                    - light.wohnzimmer_controller_cabinet_glass_edge
+                    - light.wohnzimmer_controller_cabinet_inner_diffuser
                 data:
                   brightness_pct: 100
 
@@ -189,25 +193,25 @@ script:
             sequence:
               - service: select.select_option
                 target:
-                  entity_id: select.livingroom_light_scene
+                  entity_id: select.wohnzimmer_controller_livingroom_light_scene
                 data:
                   option: "Lift Show"
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_intensity
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
                 data:
                   value: 75
 
               - service: number.set_value
                 target:
-                  entity_id: number.livingroom_effect_speed
+                  entity_id: number.wohnzimmer_controller_livingroom_effect_speed
                 data:
                   value: 45
 
               - service: cover.open_cover
                 target:
-                  entity_id: cover.tv_lift
+                  entity_id: cover.wohnzimmer_controller_tv_lift
 
 automation:
   - id: livingroom_mode_apply_from_dropdown
@@ -226,11 +230,11 @@ automation:
     mode: single
     trigger:
       - platform: state
-        entity_id: binary_sensor.tv_lift_fault
+        entity_id: binary_sensor.wohnzimmer_controller_tv_lift_fault
         to: "on"
     action:
       - service: select.select_option
         target:
-          entity_id: select.livingroom_light_scene
+          entity_id: select.wohnzimmer_controller_livingroom_light_scene
         data:
           option: "Fault"
