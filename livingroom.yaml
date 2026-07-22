@@ -53,6 +53,16 @@ esphome:
       - output.set_level:
           id: out_fan_pwm
           level: 45%
+      # DIAGNOSE/DEFAULT: Feuer-Effekt direkt beim Boot auf beide Strips legen
+      # (unabhaengig von HA/Szene) -> schliesst ein Steuerungsproblem aus.
+      - light.turn_on:
+          id: light_sideboard_ambient
+          brightness: 100%
+          effect: "Fireplace"
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          brightness: 100%
+          effect: "Fireplace"
 
 esp32:
   board: esp32-s3-devkitc-1
