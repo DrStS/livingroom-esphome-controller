@@ -427,6 +427,10 @@ button:
     on_press:
       - lambda: |-
           id(mock_lift_fault) = false;
+  # Neustart per HA (u. a. um den 1-Wire-Bus neu zu scannen).
+  - platform: restart
+    name: "Controller Restart"
+    id: controller_restart
 
 switch:
   # Bring-up-Test fuer den Motor (IBT-2): solange EIN, faehrt der Motor im
