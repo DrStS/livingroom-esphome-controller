@@ -48,6 +48,9 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [x] Glass Edge (GPIO46, SPI-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
 - [x] Beide Strips flackerfrei (statisches Weiss unter W5500-Last bestaetigt)
 - [x] Beide Strips angeschlossen + An/Aus verifiziert (nicht vertauscht)
+- [x] Glass Edge (GPIO46): SPI-Treiber auf Espressif `led_strip` (SPI-DMA) umgestellt
+      -> Farben stabil + korrekt (Handkodierung ersetzt). Rest: ~5 % gelegentlicher
+      Einzelpixel-Nachzieher -> Signalintegritaet (Serienwiderstand/Leitung/Masse)
 - [x] LED-Wiring-Test-Button (R→G→B→W + Pixel Walk automatisch, fuer Farbreihenfolge/Anzahl/tote Pixel)
 - [~] Effekte: Fireplace, Aurora, Lift Show, Fault, Rainbow, Color Wipe,
       Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk

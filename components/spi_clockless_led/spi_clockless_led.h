@@ -8,9 +8,7 @@
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
 
-#include <driver/gpio.h>
-#include <driver/spi_master.h>
-#include <esp_err.h>
+#include "led_strip.h"
 
 namespace esphome::spi_clockless_led {
 
@@ -28,8 +26,10 @@ enum SPIHost : uint8_t {
   SPI_HOST_3,
 };
 
-// SK6812/WS2812-Ausgabe ueber SPI-DMA. Jedes Datenbit wird als 4 SPI-Bits
-// kodiert (3,2 MHz -> 1,25 us Bitperiode): "0" = 1000, "1" = 1100.
+// SK6812/WS2812-Ausgabe ueber das erprobte Espressif-led_strip-SPI-Backend
+// (SPI-DMA). Interrupt-immun (W5500) und korrektes Timing -- die eigentliche
+// Signalerzeugung uebernimmt der IDF-Treiber. Diese Klasse implementiert nur
+// die ESPHome-AddressableLight-Schnittstelle (Puffer + Effekte).
 class SPIClocklessLedStrip final : public light::AddressableLight {
  public:
   void setup() override;
@@ -55,7 +55,6 @@ class SPIClocklessLedStrip final : public light::AddressableLight {
   void set_is_rgbw(bool is_rgbw) { this->is_rgbw_ = is_rgbw; }
   void set_rgb_order(RGBOrder rgb_order) { this->rgb_order_ = rgb_order; }
   void set_spi_host(SPIHost host) { this->spi_host_ = host; }
-  void set_clock_speed(uint32_t hz) { this->clock_speed_ = hz; }
   void set_max_refresh_rate(uint32_t interval_us) { this->max_refresh_rate_ = interval_us; }
 
   void clear_effect_data() override {
@@ -67,20 +66,16 @@ class SPIClocklessLedStrip final : public light::AddressableLight {
   light::ESPColorView get_view_internal(int32_t index) const override;
 
   size_t get_buffer_size_() const { return this->num_leds_ * (this->is_rgbw_ ? 4 : 3); }
-  // 4 SPI-Bytes pro Datenbyte (4 SPI-Bits pro Datenbit).
-  size_t get_spi_buffer_size_() const { return this->get_buffer_size_() * 4; }
 
-  uint8_t *buf_{nullptr};
+  uint8_t *buf_{nullptr};          // Pixel im RGB(W)-Standardformat; Reihenfolge macht led_strip
   uint8_t *effect_data_{nullptr};
-  uint8_t *dma_buf_{nullptr};
 
-  spi_device_handle_t spi_dev_{nullptr};
+  led_strip_handle_t strip_{nullptr};
 
   uint8_t pin_{0};
   uint16_t num_leds_{0};
   bool is_rgbw_{false};
   bool inverted_{false};
-  uint32_t clock_speed_{3200000};
   RGBOrder rgb_order_{ORDER_GRB};
   SPIHost spi_host_{SPI_HOST_3};
 
