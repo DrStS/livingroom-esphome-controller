@@ -37,10 +37,14 @@ substitutions:
   pin_encoder_a: GPIO16
   pin_encoder_b: GPIO18
   # Endschalter (USB bleibt erhalten -> GPIO19/20 NICHT verwenden)
-  pin_endstop_top: GPIO38     # sauberer I/O
+  pin_endstop_top: GPIO3      # Strapping, als Eingang ok (Endschalter offen beim Boot)
   pin_endstop_bottom: GPIO44  # UART0 RX, als Eingang ok (keine UART-Bridge auf dem Board)
-  # Dritter freier Pin: GPIO3 (Strapping, als Eingang ok) -- Zweck noch offen
+
+  # Onboard-RGB-LED des Waveshare-Boards (WS2812). MUSS separat AUS geschaltet
+  # werden, sonst leuchtet sie (uninitialisiert) hell weiss. Kollidierte frueher
+  # mit dem Fan-Tacho -> Tacho daher auf GPIO38 verlegt.
+  pin_onboard_led: GPIO21
 
   # 4-Pin-Fan (Testaufbau): PWM 25 kHz, Tacho open-collector (Pull-up noetig)
   pin_fan_pwm: GPIO17   # PWM-Steuerung
-  pin_fan_tach: GPIO21  # Tacho / Drehzahl
+  pin_fan_tach: GPIO38  # Tacho / Drehzahl (war GPIO21 = Onboard-LED -> verlegt)

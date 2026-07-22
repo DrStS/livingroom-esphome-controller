@@ -20,7 +20,8 @@ Pin-Quelle der Wahrheit: `config/pins.yaml`.
 | GPIO48 | I2C SDA | 2× INA226 (0x40 = 5V, 0x41 = 12V) |
 | GPIO47 | I2C SCL | 2× INA226 |
 | GPIO17 | Lüfter PWM | 4-Pin-Fan (LEDC 25 kHz) |
-| GPIO21 | Lüfter Tacho | 4-Pin-Fan (pulse_counter, ext. 4,7 kΩ Pull-up) |
+| GPIO38 | Lüfter Tacho | 4-Pin-Fan (pulse_counter; war GPIO21, wg. Onboard-LED verlegt) |
+| GPIO21 | Onboard-RGB-LED | Waveshare WS2812 — per Firmware auf AUS gesetzt |
 | GPIO45 | LED Sideboard | SK6812 RGBW, 112 px, über 74AHCT125 (SPI-DMA, MOSI SPI3, kurzes Kabel) |
 | GPIO46 | LED Cabinet Glass Edge | SK6812 RGBW, 103 px, über 74AHCT125 (RMT-DMA, langes Kabel) |
 | GPIO39 | Motor Enable | IBT-2 (R_EN + L_EN gebrückt) |

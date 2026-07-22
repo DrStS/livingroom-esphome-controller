@@ -168,6 +168,20 @@ output:
 
 light:
   # --- Sideboard Ambient (ECHT, SK6812 RGBW, GPIO45) ---
+  # --- Onboard-RGB-LED des Waveshare-Boards (GPIO21) -> dauerhaft AUS ---
+  # GPIO21 ist die Onboard-WS2812. Wird als 1-Pixel-Strip initialisiert und
+  # beim Boot mit schwarzem Frame ausgeschaltet. internal -> nicht in HA sichtbar.
+  - platform: esp32_rmt_led_strip
+    id: onboard_led
+    internal: true
+    pin: ${pin_onboard_led}
+    num_leds: 1
+    chipset: WS2812
+    rgb_order: GRB
+    use_dma: false
+    rmt_symbols: 48
+    restore_mode: ALWAYS_OFF
+
   # --- Sideboard Ambient (SK6812 RGBW, GPIO45) ueber SPI-DMA (SPI3) ---
   # Kurzes Kabel -> SPI-DMA laeuft hier sauber. (Langer Weg vertraegt SPI nicht,
   # daher liegt der lange Cabinet-Strip bewusst auf RMT, siehe unten.)
