@@ -38,7 +38,7 @@ esphome:
   project:
     name: sicklinger.livingroom_controller
     version: "0.1.0"
-  # Beim Booten Motor sicher stillsetzen (Enable aus, beide PWM auf 0).
+  # Beim Booten Motor sicher stillsetzen und Luefter sanft anlaufen lassen.
   on_boot:
     priority: -100
     then:
@@ -49,6 +49,10 @@ esphome:
       - output.set_level:
           id: out_motor_lpwm
           level: 0%
+      # Luefter-Anlauf: kurz kraeftiger, damit er sicher losdreht.
+      - output.set_level:
+          id: out_fan_pwm
+          level: 45%
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -132,6 +136,11 @@ globals:
     type: bool
     restore_value: yes
     initial_value: "false"
+  # Aktuelles Luefter-PWM-Duty (0..1), von der Temperatur-Regelung gestellt.
+  - id: fan_duty
+    type: float
+    restore_value: no
+    initial_value: "0.35"
 
 # =============================================================================
 # LICHTER -- 2 Strips (wie Original-Hardware): Sideboard + Cabinet Glass Edge,
@@ -244,14 +253,13 @@ light:
     effects: *led_effects
 
 # =============================================================================
-# LUEFTER (ECHT) -- HA-steuerbare Drehzahl ueber PWM-Ausgang out_fan_pwm.
-# Drehzahl-Rueckmeldung: Sensor "AV Fan RPM" (pulse_counter).
+# LUEFTER (ECHT) -- AUTOMATISCHE Temperatur-Regelung (kein manueller Regler).
+# Zieldrehzahl nach AV-Receiver-Temperatur, geschlossener Regelkreis ueber den
+# Tacho (out_fan_pwm <- Regelung im interval-Block). Siehe interval: unten.
+#   < 28 C        -> ~450 rpm  (leise, Lebenszeichen)
+#   28..32 C      -> ~1200 rpm
+#   > 32 C        -> Vollgas (100 %)
 # =============================================================================
-fan:
-  - platform: speed
-    id: av_fan
-    name: "AV Fan"
-    output: out_fan_pwm
 
 # =============================================================================
 # TV-LIFT (Cover) -- derzeit MOCK (Positions-Simulation via Template).
@@ -383,6 +391,17 @@ sensor:
     update_interval: 1s
     filters:
       - multiply: 0.5
+
+  # --- Luefter-Duty (Diagnose, von der Temperatur-Regelung gestellt) ---
+  - platform: template
+    name: "AV Fan Duty"
+    id: av_fan_duty
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 2s
+    lambda: 'return id(fan_duty) * 100.0f;'
 
   # --- System-Diagnose ---
   - platform: uptime
@@ -592,6 +611,44 @@ interval:
               id(mock_lift_position) += (delta > 0.0f ? 0.8f : -0.8f);
             }
           }
+
+  # Luefter-Temperatur-Regelung (jede Sekunde). Zielband mit Hysterese:
+  #   Band 0 = ~450 rpm, Band 1 = ~1200 rpm, Band 2 = Vollgas.
+  # Geschlossener Regler: Duty wird per Tacho-Rueckmeldung auf die Ziel-RPM
+  # gezogen. Anlauf-Kick, falls der Luefter (noch) steht.
+  - interval: 1s
+    then:
+      - lambda: |-
+          static int band = 0;
+          const float t = id(av_receiver_temperature).state;   // kann NaN sein
+          // Bandwahl mit 1 C Hysterese (Fallback Band 0, wenn kein Temp-Wert).
+          if (!isnan(t)) {
+            if (band == 0 && t >= 28.0f) band = 1;
+            if (band == 1 && t >= 32.0f) band = 2;
+            if (band == 2 && t <  31.0f) band = 1;
+            if (band == 1 && t <  27.0f) band = 0;
+          } else {
+            band = 0;
+          }
+
+          float duty = id(fan_duty);
+          if (band == 2) {
+            duty = 1.0f;                       // Vollgas
+          } else {
+            const float target = (band == 1) ? 1200.0f : 450.0f;
+            const float rpm = id(av_fan_rpm).state;
+            if (isnan(rpm) || rpm < 100.0f) {
+              // Luefter steht -> Anlauf-Kick
+              duty = fmaxf(duty, 0.45f);
+            } else {
+              // Integralregler: Duty an Ziel-RPM annaehern
+              duty += 0.00015f * (target - rpm);
+            }
+            if (duty < 0.10f) duty = 0.10f;    // Mindest-Duty (dreht noch)
+            if (duty > 1.0f)  duty = 1.0f;
+          }
+          id(fan_duty) = duty;
+          id(out_fan_pwm).set_level(duty);
 
   # Motor-Bring-up-Test: nur aktiv, solange "Motor Test Mode" EIN ist.
   # 5 s links, dann 5 s rechts, 50 % Duty. Vor jedem Umschalten die Gegenseite

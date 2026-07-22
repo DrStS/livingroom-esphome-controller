@@ -33,11 +33,14 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [ ] Übertemperatur-Warnung je Zone (Binary-Sensor)
 
 ## 4. Lüfter (4-Pin)
-- [x] PWM-Drehzahl über HA (`fan.av_fan`)
 - [x] RPM-Sensor (Tacho)
-- [ ] Stall-Erkennung (PWM > 0 aber RPM = 0 → Warnung)
-- [ ] Automatik: Drehzahl nach AV-Receiver-Temperatur (Kurve)
-- [ ] Min-Duty / Anlaufkick (damit Lüfter sicher anläuft)
+- [x] Automatik: Drehzahl nach AV-Receiver-Temperatur (geschlossener Regelkreis)
+      < 28 C → ~450 rpm · 28–32 C → ~1200 rpm · > 32 C → Vollgas (mit Hysterese)
+- [x] Anlauf-Kick + Min-Duty (Lüfter läuft sicher an; 450 rpm verifiziert)
+- [x] Duty als Diagnose-Sensor (`AV Fan Duty`)
+- [x] Kein manueller Regler mehr (rein automatisch)
+- [ ] Stall-Erkennung (Duty > 0 aber RPM = 0 → Warn-Binary-Sensor)
+- [ ] 1200-rpm- und Vollgas-Band real gegen Temperatur verifizieren
 
 ## 5. LED-Strips (2× SK6812 RGBW)
 - [x] Sideboard (GPIO45, RMT-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
