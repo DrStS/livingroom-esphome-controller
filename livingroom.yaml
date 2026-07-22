@@ -8,9 +8,9 @@
 #   - 2x INA226 Strommessung (I2C, 12V/5V-Schiene)
 #   - DHT22 (Raum Temp/Feuchte) + 2x DS18B20 (AV-Receiver, Cabinet)
 #   - 4-Pin-Luefter: PWM (25 kHz) + Tacho (pulse_counter)
-#   - 2x SK6812 RGBW LED-Strips:
-#       * Sideboard   GPIO45 -> RMT-DMA
-#       * Glass Edge  GPIO46 -> SPI-DMA (SPI3, eigener Treiber components/)
+#   - 2x SK6812 RGBW LED-Strips (Zuordnung nach Kabellaenge optimiert):
+#       * Sideboard   GPIO45 -> SPI-DMA (SPI3, eigener Treiber, kurzes Kabel)
+#       * Glass Edge  GPIO46 -> RMT-DMA (langes Kabel -> mehr Signalreserve)
 #   - Motor IBT-2/BTS7960: RPWM/LPWM/Enable (Ausgaenge verdrahtet, per
 #     "Motor Test Mode"-Schalter testbar)
 #
@@ -168,19 +168,18 @@ output:
 
 light:
   # --- Sideboard Ambient (ECHT, SK6812 RGBW, GPIO45) ---
-  - platform: esp32_rmt_led_strip
+  # --- Sideboard Ambient (SK6812 RGBW, GPIO45) ueber SPI-DMA (SPI3) ---
+  # Kurzes Kabel -> SPI-DMA laeuft hier sauber. (Langer Weg vertraegt SPI nicht,
+  # daher liegt der lange Cabinet-Strip bewusst auf RMT, siehe unten.)
+  - platform: spi_clockless_led
     id: light_sideboard_ambient
     name: "Sideboard Ambient"
     pin: ${pin_led_sideboard}
     num_leds: ${led_sideboard_pixels}
-    chipset: SK6812
     rgb_order: GRB
     is_rgbw: true
-    # Strip 1 bekommt den einzigen DMA-RMT-Kanal -> flimmerfrei trotz W5500-Interruptlast.
-    use_dma: true
-    rmt_symbols: 1024
-    use_psram: false
-    max_refresh_rate: 20ms
+    spi_host: SPI3
+    clock_speed: 3333333
     restore_mode: RESTORE_DEFAULT_OFF
     effects: &led_effects
       # TEST: eine einzelne LED wandert durch den Strip (Pixel-fuer-Pixel-Check).
@@ -269,19 +268,22 @@ light:
           name: "Fireworks"
       - pulse:
           name: "Pulse"
-  # --- Cabinet Glass Edge (ECHT, SK6812 RGBW, GPIO46) ---
-  # Zweiter Strip ueber SPI-DMA (SPI3_HOST). Der einzige DMA-RMT-Kanal des S3
-  # gehoert Strip 1; SPI-DMA ist ebenso interrupt-immun -> kein Flackern durch
-  # den W5500. GPIO46 dient als MOSI, SCLK/MISO/CS bleiben unbelegt.
-  - platform: spi_clockless_led
+  # --- Cabinet Glass Edge (SK6812 RGBW, GPIO46) ueber RMT-DMA ---
+  # Langes Kabel -> RMT hat mehr Signalreserve als der SPI-Stream und laeuft
+  # damit auch ueber die lange Leitung einwandfrei (per Treiber-Tausch bestaetigt).
+  # Nutzt den einzigen DMA-faehigen RMT-Kanal des S3.
+  - platform: esp32_rmt_led_strip
     id: light_cabinet_glass_edge
     name: "Cabinet Glass Edge"
     pin: ${pin_led_glass_edge}
     num_leds: ${led_glass_edge_pixels}
+    chipset: SK6812
     rgb_order: GRB
     is_rgbw: true
-    spi_host: SPI3
-    clock_speed: 3333333
+    use_dma: true
+    rmt_symbols: 1024
+    use_psram: false
+    max_refresh_rate: 20ms
     restore_mode: RESTORE_DEFAULT_OFF
     effects: *led_effects
 

@@ -21,8 +21,8 @@ Pin-Quelle der Wahrheit: `config/pins.yaml`.
 | GPIO47 | I2C SCL | 2× INA226 |
 | GPIO17 | Lüfter PWM | 4-Pin-Fan (LEDC 25 kHz) |
 | GPIO21 | Lüfter Tacho | 4-Pin-Fan (pulse_counter, ext. 4,7 kΩ Pull-up) |
-| GPIO45 | LED Sideboard | SK6812 RGBW, 112 px, über 74AHCT125 (RMT-DMA) |
-| GPIO46 | LED Cabinet Glass Edge | SK6812 RGBW, 103 px, über 74AHCT125 (SPI-DMA, MOSI SPI3) |
+| GPIO45 | LED Sideboard | SK6812 RGBW, 112 px, über 74AHCT125 (SPI-DMA, MOSI SPI3, kurzes Kabel) |
+| GPIO46 | LED Cabinet Glass Edge | SK6812 RGBW, 103 px, über 74AHCT125 (RMT-DMA, langes Kabel) |
 | GPIO39 | Motor Enable | IBT-2 (R_EN + L_EN gebrückt) |
 | GPIO40 | Motor RPWM | IBT-2 / BTS7960 |
 | GPIO41 | Motor LPWM | IBT-2 / BTS7960 |
@@ -37,10 +37,12 @@ Reserviert, noch nicht verbunden: Endschalter oben/unten (`pin_endstop_top`,
 - **Nicht nutzbar:** GPIO26–32 (Flash), GPIO33–37 (Octal-PSRAM), GPIO9–14 (ETH),
   GPIO19/20 (native USB — bleibt für USB).
 - **LEDs:** 2 Strips, je eigener DMA-Weg (interrupt-immun trotz W5500). Der S3 hat
-  nur **einen** DMA-RMT-Kanal → Strip 1 (GPIO45) läuft über RMT-DMA
-  (`esp32_rmt_led_strip`), Strip 2 (GPIO46) über SPI-DMA auf SPI3 (eigener
-  Treiber `components/spi_clockless_led`, GPIO46 = MOSI). Non-DMA flimmert und ist
-  daher bewusst nicht im Einsatz.
+  nur **einen** DMA-RMT-Kanal. Zuordnung nach Kabellänge optimiert:
+  **Sideboard (GPIO45, kurzes Kabel) = SPI-DMA** (eigener Treiber
+  `components/spi_clockless_led`, MOSI auf SPI3), **Glass Edge (GPIO46, langes
+  Kabel) = RMT-DMA** (`esp32_rmt_led_strip`). RMT hat über die lange Leitung mehr
+  Signalreserve; SPI über lange Kabel glitcht (per Treiber-Tausch verifiziert).
+  Non-DMA flimmert und ist bewusst nicht im Einsatz.
 - **Lüfter:** über HA steuerbar (`fan.wohnzimmer_controller_av_fan`), RPM als Sensor.
 - **Motor-Test:** Schalter `Motor Test Mode` (Standard AUS) fährt zum Bring-up
   5 s links / 5 s rechts bei 50 % Duty. Kein Endschalter-Schutz — nur bei

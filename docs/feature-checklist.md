@@ -48,13 +48,13 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [x] Glass Edge (GPIO46, SPI-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
 - [x] Beide Strips flackerfrei (statisches Weiss unter W5500-Last bestaetigt)
 - [x] Beide Strips angeschlossen + An/Aus verifiziert (nicht vertauscht)
-- [x] Glass Edge (GPIO46): SPI-Treiber auf Espressif `led_strip` (SPI-DMA) umgestellt
-      -> Farben stabil + korrekt (Handkodierung ersetzt). Rest: ~5 % gelegentlicher
-      Einzelpixel-Nachzieher -> Signalintegritaet (Serienwiderstand/Leitung/Masse)
+- [x] Treiberzuordnung nach Kabellaenge geloest (per Treiber-Tausch verifiziert):
+      Sideboard (GPIO45, kurzes Kabel) = SPI-DMA, Glass Edge (GPIO46, langes Kabel)
+      = RMT-DMA. Beide flackerfrei + glitchfrei, auch mit langem Kabel am Cabinet.
 - [x] LED-Wiring-Test-Button (R→G→B→W + Pixel Walk automatisch, fuer Farbreihenfolge/Anzahl/tote Pixel)
-- [~] Effekte: Fireplace, Aurora, Lift Show, Fault, Rainbow, Color Wipe,
-      Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk
-      (implementiert; nur Pixel-Walk-Bring-up lief, restliche Effekte NOCH NICHT getestet)
+- [x] Effekte animiert auf beiden Strips glitchfrei (Rainbow/Fireworks/etc.
+      beim Treiber-Tausch-Test bestaetigt): Fireplace, Aurora, Lift Show, Fault,
+      Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk
 - [~] Echter Feuer-Effekt „Fireplace" = Fire2012 (Kriegsman) mit Schwarzkoerper-
       Farbabbildung, pro-Pixel-Waerme (effect_data), Regler „Fire Cooling" +
       „Fire Sparking" (implementiert, visuell noch zu bewerten)
