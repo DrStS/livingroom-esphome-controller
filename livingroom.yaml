@@ -214,8 +214,10 @@ light:
               if (t192 & 0x40) return Color(255, ramp, 0, 0);     // Mitte
               return Color(ramp, 0, 0, 0);                        // kuehlster Bereich
             };
-            const int cooling = (int) id(fire_cooling).state;
-            const int sparking = (int) id(fire_sparking).state;
+            // Fest eingestellt (kein externer Regler): niedriges Cooling ->
+            // hohe Flammen, die den langen Streifen fuellen; lebhaftes Sparking.
+            const int cooling = 18;
+            const int sparking = 120;
             // 1) Abkuehlen
             for (int i = 0; i < N; i++) {
               int c = ((cooling * 10) / N) + 2;
@@ -575,26 +577,7 @@ number:
     initial_value: 35
     on_value:
       - script.execute: apply_light_scene
-  # Feuer-Feintuning (Fire2012). Cooling: hoch = kuerzere Flammen.
-  # Sparking: hoch = loderndes Feuer, niedrig = ruhiges Flackern.
-  - platform: template
-    name: "Fire Cooling"
-    id: fire_cooling
-    optimistic: true
-    restore_value: true
-    min_value: 20
-    max_value: 100
-    step: 1
-    initial_value: 55
-  - platform: template
-    name: "Fire Sparking"
-    id: fire_sparking
-    optimistic: true
-    restore_value: true
-    min_value: 50
-    max_value: 200
-    step: 1
-    initial_value: 120
+
 
 # =============================================================================
 # SZENEN-ENGINE (Mock)
