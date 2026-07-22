@@ -34,18 +34,21 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 
 ## 4. Lüfter (4-Pin)
 - [x] RPM-Sensor (Tacho)
-- [x] Automatik: Drehzahl nach AV-Receiver-Temperatur (geschlossener Regelkreis)
-      < 28 C → ~450 rpm · 28–32 C → ~1200 rpm · > 32 C → Vollgas (mit Hysterese)
-- [x] Anlauf-Kick + Min-Duty (Lüfter läuft sicher an; 450 rpm verifiziert)
+- [x] Automatik: lineare Kennlinie nach AV-Receiver-Temperatur (geschlossener Regelkreis)
+      ≤ 26 C → 500 rpm · 26–34 C → linear 500→1400 rpm · > 34 C → Vollgas (0,5 C Hysterese)
+- [x] Anlauf-Kick + Min-Duty (Lüfter läuft sicher an)
 - [x] Duty als Diagnose-Sensor (`AV Fan Duty`)
 - [x] Kein manueller Regler mehr (rein automatisch)
+- [x] Leerlauf verifiziert: 500 rpm @ ~24 C, Duty ~35 %, stabil
+- [ ] Rampe (26–34 C) und Vollgas-Übergang (> 34 C) per Anwärmen live verifizieren
 - [ ] Stall-Erkennung (Duty > 0 aber RPM = 0 → Warn-Binary-Sensor)
-- [ ] 1200-rpm- und Vollgas-Band real gegen Temperatur verifizieren
 
 ## 5. LED-Strips (2× SK6812 RGBW)
 - [x] Sideboard (GPIO45, RMT-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
 - [x] Glass Edge (GPIO46, SPI-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
 - [x] Beide Strips flackerfrei (statisches Weiss unter W5500-Last bestaetigt)
+- [x] Beide Strips angeschlossen + An/Aus verifiziert (nicht vertauscht)
+- [x] LED-Wiring-Test-Button (R→G→B→W + Pixel Walk automatisch, fuer Farbreihenfolge/Anzahl/tote Pixel)
 - [~] Effekte: Fireplace, Aurora, Lift Show, Fault, Rainbow, Color Wipe,
       Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk
       (implementiert; nur Pixel-Walk-Bring-up lief, restliche Effekte NOCH NICHT getestet)

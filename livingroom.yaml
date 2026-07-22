@@ -256,9 +256,9 @@ light:
 # LUEFTER (ECHT) -- AUTOMATISCHE Temperatur-Regelung (kein manueller Regler).
 # Zieldrehzahl nach AV-Receiver-Temperatur, geschlossener Regelkreis ueber den
 # Tacho (out_fan_pwm <- Regelung im interval-Block). Siehe interval: unten.
-#   < 28 C        -> ~450 rpm  (leise, Lebenszeichen)
-#   28..32 C      -> ~1200 rpm
-#   > 32 C        -> Vollgas (100 %)
+#   <= 26 C       -> 500 rpm   (leise, Lebenszeichen)
+#   26..34 C      -> Zieldrehzahl linear 500 -> 1400 rpm (Regler)
+#   > 34 C        -> Vollgas (100 % Duty, ohne Regler)
 # =============================================================================
 
 # =============================================================================
@@ -486,6 +486,12 @@ button:
   - platform: restart
     name: "Controller Restart"
     id: controller_restart
+  # LED-Verdrahtungs-Selbsttest (siehe Skript led_wiring_test).
+  - platform: template
+    name: "LED Wiring Test"
+    id: led_wiring_test_button
+    on_press:
+      - script.execute: led_wiring_test
 
 switch:
   # Bring-up-Test fuer den Motor (IBT-2): solange EIN, faehrt der Motor im
@@ -543,6 +549,102 @@ number:
 # per-Pixel-Effekte nutzen (addressable_lambda).
 # =============================================================================
 script:
+  # LED-Verdrahtungs-Selbsttest. Ablauf (beide Strips):
+  #  1) Nur Sideboard rot / nur Glass Edge rot -> Pin-Zuordnung, nicht vertauscht
+  #  2) R -> G -> B -> W auf beiden -> Farbreihenfolge (GRB) + RGBW-Weisskanal
+  #  3) Pixel Walk -> LED-Anzahl, Laufrichtung, tote Pixel
+  - id: led_wiring_test
+    mode: restart
+    then:
+      # 1) Pin-Zuordnung
+      - light.turn_off: light_cabinet_glass_edge
+      - light.turn_on:
+          id: light_sideboard_ambient
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          white: 0%
+          effect: "None"
+      - delay: 2s
+      - light.turn_off: light_sideboard_ambient
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          white: 0%
+          effect: "None"
+      - delay: 2s
+      # 2) Farbreihenfolge + RGBW (beide gleichzeitig): ROT
+      - light.turn_on:
+          id: light_sideboard_ambient
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          white: 0%
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          white: 0%
+      - delay: 1500ms
+      # GRUEN
+      - light.turn_on:
+          id: light_sideboard_ambient
+          red: 0%
+          green: 100%
+          blue: 0%
+          white: 0%
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          red: 0%
+          green: 100%
+          blue: 0%
+          white: 0%
+      - delay: 1500ms
+      # BLAU
+      - light.turn_on:
+          id: light_sideboard_ambient
+          red: 0%
+          green: 0%
+          blue: 100%
+          white: 0%
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          red: 0%
+          green: 0%
+          blue: 100%
+          white: 0%
+      - delay: 1500ms
+      # WEISS (nur W-Kanal)
+      - light.turn_on:
+          id: light_sideboard_ambient
+          red: 0%
+          green: 0%
+          blue: 0%
+          white: 100%
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          red: 0%
+          green: 0%
+          blue: 0%
+          white: 100%
+      - delay: 2s
+      # 3) Pixel Walk (Anzahl / Richtung / tote Pixel)
+      - light.turn_on:
+          id: light_sideboard_ambient
+          brightness: 100%
+          effect: "Pixel Walk"
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          brightness: 100%
+          effect: "Pixel Walk"
+
   - id: apply_light_scene
     then:
       - lambda: |-
@@ -612,39 +714,40 @@ interval:
             }
           }
 
-  # Luefter-Temperatur-Regelung (jede Sekunde). Zielband mit Hysterese:
-  #   Band 0 = ~450 rpm, Band 1 = ~1200 rpm, Band 2 = Vollgas.
-  # Geschlossener Regler: Duty wird per Tacho-Rueckmeldung auf die Ziel-RPM
-  # gezogen. Anlauf-Kick, falls der Luefter (noch) steht.
+  # Luefter-Temperatur-Regelung (jede Sekunde), lineare Kennlinie:
+  #   <= 26 C -> 500 rpm, 26..34 C -> linear bis 1400 rpm (Regler),
+  #   > 34 C -> Vollgas (100 % Duty, ohne Regler; 0,5 C Hysterese).
   - interval: 1s
     then:
       - lambda: |-
-          static int band = 0;
+          static bool full = false;
           const float t = id(av_receiver_temperature).state;   // kann NaN sein
-          // Bandwahl mit 1 C Hysterese (Fallback Band 0, wenn kein Temp-Wert).
           if (!isnan(t)) {
-            if (band == 0 && t >= 28.0f) band = 1;
-            if (band == 1 && t >= 32.0f) band = 2;
-            if (band == 2 && t <  31.0f) band = 1;
-            if (band == 1 && t <  27.0f) band = 0;
-          } else {
-            band = 0;
+            if (t >= 34.0f) full = true;
+            else if (t < 33.5f) full = false;
           }
 
           float duty = id(fan_duty);
-          if (band == 2) {
-            duty = 1.0f;                       // Vollgas
+          if (full) {
+            duty = 1.0f;                         // Vollgas ohne Regler
           } else {
-            const float target = (band == 1) ? 1200.0f : 450.0f;
+            // Zieldrehzahl linear zwischen 26 C/500 rpm und 34 C/1400 rpm.
+            float target;
+            if (isnan(t)) {
+              target = 500.0f;                   // Fallback ohne Temp-Wert
+            } else {
+              float tc = t;
+              if (tc < 26.0f) tc = 26.0f;
+              if (tc > 34.0f) tc = 34.0f;
+              target = 500.0f + (tc - 26.0f) / (34.0f - 26.0f) * (1400.0f - 500.0f);
+            }
             const float rpm = id(av_fan_rpm).state;
             if (isnan(rpm) || rpm < 100.0f) {
-              // Luefter steht -> Anlauf-Kick
-              duty = fmaxf(duty, 0.45f);
+              duty = fmaxf(duty, 0.45f);         // Anlauf-Kick, falls Luefter steht
             } else {
-              // Integralregler: Duty an Ziel-RPM annaehern
-              duty += 0.00015f * (target - rpm);
+              duty += 0.00015f * (target - rpm); // Integralregler auf Ziel-RPM
             }
-            if (duty < 0.10f) duty = 0.10f;    // Mindest-Duty (dreht noch)
+            if (duty < 0.10f) duty = 0.10f;      // Mindest-Duty (dreht noch)
             if (duty > 1.0f)  duty = 1.0f;
           }
           id(fan_duty) = duty;
