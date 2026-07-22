@@ -79,7 +79,6 @@ views:
         entities:
           - entity: light.wohnzimmer_controller_sideboard_ambient
           - entity: light.wohnzimmer_controller_cabinet_glass_edge
-          - entity: light.wohnzimmer_controller_cabinet_inner_diffuser
 
       - type: entities
         title: TV Lift Status

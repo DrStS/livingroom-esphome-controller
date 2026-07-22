@@ -11,30 +11,36 @@ substitutions:
   pin_eth_interrupt: GPIO10
   pin_eth_reset: GPIO9
 
-  # I2C: SHT45 + INA226 12V + INA226 5V
-  pin_i2c_sda: GPIOxx
-  pin_i2c_scl: GPIOxx
+  # I2C: INA226 12V + INA226 5V (Module mit eigenen Pull-ups)
+  # GPIO47/48 = frei (kein Strapping/Flash/PSRAM/Ethernet)
+  pin_i2c_sda: GPIO48
+  pin_i2c_scl: GPIO47
 
-  # 1-Wire: beide DS18B20 auf einem Bus
-  pin_onewire: GPIOxx
+  # Temperatur/Feuchte (Testaufbau)
+  pin_dht: GPIO0              # DHT22 (Temp + Feuchte) -- ACHTUNG: Strapping-Pin
+  pin_ds18b20_av: GPIO1       # DS18B20 #1 (AV Receiver), eigener 1-Wire-Bus
+  pin_ds18b20_cabinet: GPIO2  # DS18B20 #2 (Cabinet), eigener 1-Wire-Bus
 
-  # LED-Datenleitungen: ESP32 -> 74AHCT125 -> 330 Ohm -> Strip DATA
-  pin_led_sideboard: GPIOxx
-  pin_led_glass_edge: GPIOxx
-  pin_led_inner_diffuser: GPIOxx
+  # LED-Datenleitungen (2 Strips): ESP32 -> 74AHCT125 -> 330 Ohm -> Strip DATA
+  # ACHTUNG: GPIO45/46 sind Strapping-Pins -> falls Boot zickt, umlegen.
+  pin_led_sideboard: GPIO45   # Sideboard, 112 px
+  pin_led_glass_edge: GPIO46  # Cabinet Glass Edge, 103 px
 
-  # Motorcontroller: 3,3-V-kompatibel laut Vorgabe, direkte Signale + externe Pulldowns
-  pin_motor_rpwm: GPIOxx
-  pin_motor_lpwm: GPIOxx
-  pin_motor_ren: GPIOxx
-  pin_motor_len: GPIOxx
+  # Motorcontroller IBT-2 (BTS7960): 2x PWM + 1x Enable (R_EN+L_EN gebrueckt)
+  # Auf GPIO39-41 (JTAG-Pins MTCK/MTDO/MTDI, als I/O nutzbar; externes JTAG entfaellt)
+  pin_motor_ren: GPIO39    # Enable (R_EN und L_EN zusammen auf GPIO39)
+  pin_motor_len: GPIO39    # -> gleicher Pin wie ren (gebrueckt)
+  pin_motor_rpwm: GPIO40   # PWM rechts
+  pin_motor_lpwm: GPIO41   # PWM links
 
-  # Encoder / Endschalter
-  pin_encoder_a: GPIOxx
-  pin_encoder_b: GPIOxx
-  pin_endstop_top: GPIOxx
-  pin_endstop_bottom: GPIOxx
+  # Encoder (Quadratur A/B)
+  pin_encoder_a: GPIO16
+  pin_encoder_b: GPIO18
+  # Endschalter (USB bleibt erhalten -> GPIO19/20 NICHT verwenden)
+  pin_endstop_top: GPIO38     # sauberer I/O
+  pin_endstop_bottom: GPIO44  # UART0 RX, als Eingang ok (keine UART-Bridge auf dem Board)
+  # Dritter freier Pin: GPIO3 (Strapping, als Eingang ok) -- Zweck noch offen
 
-  # 4-Pin-Fan: PWM über Open-Collector/BC547/BC337, Tacho mit Pull-up auf 3,3 V
-  pin_fan_pwm: GPIOxx
-  pin_fan_tach: GPIOxx
+  # 4-Pin-Fan (Testaufbau): PWM 25 kHz, Tacho open-collector (Pull-up noetig)
+  pin_fan_pwm: GPIO17   # PWM-Steuerung
+  pin_fan_tach: GPIO21  # Tacho / Drehzahl

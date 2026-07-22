@@ -1,14 +1,21 @@
 # =============================================================================
-# WOHNZIMMER CONTROLLER -- AKTUELL HARDWAREFREIER MOCK
+# WOHNZIMMER CONTROLLER
 # -----------------------------------------------------------------------------
-# Diese Datei laeuft mit dem FINALEN Namen (wohnzimmer-controller) und erzeugt
-# EXAKT die endgueltigen Home-Assistant-Entities, aber vorerst OHNE echte
-# Hardware (Template-Sensoren/-Outputs statt INA226/Motor/LED/DS18B20/SHT4x).
+# ESPHome-Konfiguration fuer den Waveshare ESP32-S3-ETH (W5500), esp-idf.
 #
-# Ziel: Home Assistant JETZT komplett konfigurieren. Danach bauen wir Abschnitt
-# fuer Abschnitt auf echte Hardware um -- jeweils an den mit "TODO HARDWARE"
-# markierten Stellen. Die vollstaendige Hardware-Referenz liegt im ersten
-# Commit:  git show HEAD:livingroom.yaml
+# ECHTE HARDWARE (verifiziert):
+#   - Ethernet W5500 (SPI2)
+#   - 2x INA226 Strommessung (I2C, 12V/5V-Schiene)
+#   - DHT22 (Raum Temp/Feuchte) + 2x DS18B20 (AV-Receiver, Cabinet)
+#   - 4-Pin-Luefter: PWM (25 kHz) + Tacho (pulse_counter)
+#   - 2x SK6812 RGBW LED-Strips:
+#       * Sideboard   GPIO45 -> RMT-DMA
+#       * Glass Edge  GPIO46 -> SPI-DMA (SPI3, eigener Treiber components/)
+#   - Motor IBT-2/BTS7960: RPWM/LPWM/Enable (Ausgaenge verdrahtet, per
+#     "Motor Test Mode"-Schalter testbar)
+#
+# NOCH MOCK (bis Motor + Encoder + Endschalter mechanisch verbaut sind):
+#   - TV-Lift-Cover (Positions-Simulation ueber Template)
 # =============================================================================
 
 substitutions:
@@ -31,18 +38,17 @@ esphome:
   project:
     name: sicklinger.livingroom_controller
     version: "0.1.0"
-  # TEST: beim Booten beide Strips mit dem Pixel-Walk-Chaser starten (ohne HA).
+  # Beim Booten Motor sicher stillsetzen (Enable aus, beide PWM auf 0).
   on_boot:
     priority: -100
     then:
-      - light.turn_on:
-          id: light_sideboard_ambient
-          brightness: 100%
-          effect: "Pixel Walk"
-      - light.turn_on:
-          id: light_cabinet_glass_edge
-          brightness: 100%
-          effect: "Pixel Walk"
+      - output.turn_off: out_motor_enable
+      - output.set_level:
+          id: out_motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: out_motor_lpwm
+          level: 0%
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -55,11 +61,12 @@ psram:
   mode: octal
   speed: 80MHz
 
-# TODO HARDWARE (Motor/Lift): externes living_room-Component wieder aktivieren.
-# external_components:
-#   - source:
-#       type: local
-#       path: components
+# Eigener SPI-DMA-Treiber fuer den zweiten LED-Strip (interrupt-immun trotz W5500).
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [spi_clockless_led]
 
 logger:
   level: INFO
@@ -134,7 +141,7 @@ output:
     pin: ${pin_fan_pwm}
     frequency: 25000 Hz
 
-  # Motor IBT-2 (TEST): 2x LEDC-PWM + Enable als GPIO-Ausgang
+  # Motor IBT-2/BTS7960: 2x LEDC-PWM + Enable als GPIO-Ausgang
   - platform: ledc
     id: out_motor_rpwm
     pin: ${pin_motor_rpwm}
@@ -218,27 +225,35 @@ light:
       - pulse:
           name: "Pulse"
   # --- Cabinet Glass Edge (ECHT, SK6812 RGBW, GPIO46) ---
-  - platform: esp32_rmt_led_strip
+  # Zweiter Strip ueber SPI-DMA (SPI3_HOST). Der einzige DMA-RMT-Kanal des S3
+  # gehoert Strip 1; SPI-DMA ist ebenso interrupt-immun -> kein Flackern durch
+  # den W5500. GPIO46 dient als MOSI, SCLK/MISO/CS bleiben unbelegt.
+  - platform: spi_clockless_led
     id: light_cabinet_glass_edge
     name: "Cabinet Glass Edge"
     pin: ${pin_led_glass_edge}
     num_leds: ${led_glass_edge_pixels}
-    chipset: SK6812
     rgb_order: GRB
     is_rgbw: true
-    # non-DMA (nur 1 DMA-Kanal am S3); 144 = 3 HW-Bloecke.
-    use_dma: false
-    rmt_symbols: 144
-    use_psram: false
+    spi_host: SPI3
     max_refresh_rate: 20ms
     restore_mode: RESTORE_DEFAULT_OFF
     effects: *led_effects
 
 # =============================================================================
-# TV-LIFT (Cover)
-# TODO HARDWARE (Motor/Lift): living_room-Component + LEDC-Outputs aktivieren
-#   und die Actions/Lambdas auf id(lr).command_* bzw. id(lr).cover_position()
-#   umstellen. Name "TV Lift" unveraendert lassen!
+# LUEFTER (ECHT) -- HA-steuerbare Drehzahl ueber PWM-Ausgang out_fan_pwm.
+# Drehzahl-Rueckmeldung: Sensor "AV Fan RPM" (pulse_counter).
+# =============================================================================
+fan:
+  - platform: speed
+    id: av_fan
+    name: "AV Fan"
+    output: out_fan_pwm
+
+# =============================================================================
+# TV-LIFT (Cover) -- derzeit MOCK (Positions-Simulation via Template).
+# Wird auf echten Motorbetrieb umgestellt, sobald Motor + Encoder (GPIO16/18)
+# + Endschalter mechanisch verbaut und verdrahtet sind. Name "TV Lift" behalten!
 # =============================================================================
 cover:
   - platform: template
@@ -413,6 +428,22 @@ button:
       - lambda: |-
           id(mock_lift_fault) = false;
 
+switch:
+  # Bring-up-Test fuer den Motor (IBT-2): solange EIN, faehrt der Motor im
+  # 5-s-Takt abwechselnd links/rechts mit 50 % Duty. Standard AUS.
+  # ACHTUNG SICHERHEIT: kein Endschalter-Schutz -> nur bei freilaufender
+  # Mechanik oder unter Aufsicht mit griffbereiter Stromtrennung einschalten!
+  - platform: template
+    name: "Motor Test Mode"
+    id: motor_test_mode
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    turn_off_action:
+      - lambda: |-
+          id(out_motor_enable).turn_off();
+          id(out_motor_rpwm).set_level(0.0f);
+          id(out_motor_lpwm).set_level(0.0f);
+
 select:
   - platform: template
     name: "Livingroom Light Scene"
@@ -522,35 +553,24 @@ interval:
             }
           }
 
-  # TEST: Luefter-Drehzahlrampe -- faehrt zyklisch ~30% -> 100% Duty in 17 s.
-  # 17 s (statt 5 s) aliast nicht mit dem 1-s-RPM-Fenster -> Rampe klar sichtbar.
-  # 30% ist ein Platzhalter fuer ~500 rpm; nach RPM-Sicht anpassen.
-  - interval: 100ms
-    then:
-      - lambda: |-
-          static float t = 0.0f;
-          t += 0.1f;
-          if (t >= 17.0f) t = 0.0f;
-          const float duty = 0.30f + 0.70f * (t / 17.0f);
-          id(out_fan_pwm).set_level(duty);
-
-  # TEST: Motor IBT-2 -- 5 s links, dann 5 s rechts, 50 % Duty, Endlosschleife.
-  # WICHTIG: Vor dem Umschalten immer erst die Gegenseite auf 0 setzen
-  # (verhindert BTS7960-Shoot-Through/Kurzschluss der Halbbruecken).
-  # ACHTUNG SICHERHEIT: faehrt den ECHTEN TV-Lift-Motor dauerhaft ohne
-  # Endschalter-Schutz in beide Richtungen -> nur bei freilaufender Mechanik
-  # oder unter Aufsicht mit griffbereiter Stromtrennung betreiben!
+  # Motor-Bring-up-Test: nur aktiv, solange "Motor Test Mode" EIN ist.
+  # 5 s links, dann 5 s rechts, 50 % Duty. Vor jedem Umschalten die Gegenseite
+  # zuerst auf 0 (verhindert BTS7960-Shoot-Through der Halbbruecken).
   - interval: 5s
     then:
-      - lambda: |-
-          static bool right = false;
-          right = !right;
-          id(out_motor_enable).turn_on();
-          if (right) {
-            id(out_motor_lpwm).set_level(0.0f);
-            id(out_motor_rpwm).set_level(0.5f);
-          } else {
-            id(out_motor_rpwm).set_level(0.0f);
-            id(out_motor_lpwm).set_level(0.5f);
-          }
+      - if:
+          condition:
+            switch.is_on: motor_test_mode
+          then:
+            - lambda: |-
+                static bool right = false;
+                right = !right;
+                id(out_motor_enable).turn_on();
+                if (right) {
+                  id(out_motor_lpwm).set_level(0.0f);
+                  id(out_motor_rpwm).set_level(0.5f);
+                } else {
+                  id(out_motor_rpwm).set_level(0.0f);
+                  id(out_motor_lpwm).set_level(0.5f);
+                }
 

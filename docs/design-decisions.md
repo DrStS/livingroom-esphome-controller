@@ -31,3 +31,13 @@ Zeitkritische Logik gehört nicht in YAML-Lambdas. Deshalb:
 - Pins in YAML.
 - Motion/Safety/Effects in C++20.
 - ESPHome Adapter verbindet beides.
+
+## Hardware-Constraints (Board-spezifisch)
+
+Die konkrete Pinbelegung, reservierte Pins (Octal-PSRAM GPIO33–37, Ethernet
+GPIO9–14, Strapping GPIO0/3/45/46) und der aktuelle Sensor-Status (echt vs. Mock)
+sind in **`docs/hardware-pinmap.md`** dokumentiert.
+
+Wichtig für die YAML-außen/C++-innen-Entscheidung: Genau weil die Pinbelegung
+board-abhängig ist (und z. B. Octal-PSRAM ganze GPIO-Bereiche sperrt), bleibt die
+Zuordnung in `config/pins.yaml` und nicht im C++-Core.

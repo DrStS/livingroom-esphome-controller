@@ -13,12 +13,14 @@ substitutions:
   lift_homing_duty: "0.30"
   motor_pwm_frequency: 20000 Hz
 
-  ina226_12v_address: "0x40"
-  ina226_5v_address: "0x41"
-  ina226_12v_shunt: "0.001 ohm"
-  ina226_5v_shunt: "0.001 ohm"
-  ina226_12v_max_current: "20A"
-  ina226_5v_max_current: "25A"
+  # Adressen vertauscht ggue. Erwartung: Modul an 0x41 haengt an der 12V-Schiene,
+  # Modul an 0x40 an der 5V-Schiene (per Log-Messung bestaetigt).
+  ina226_12v_address: "0x41"   # misst ~12 V
+  ina226_5v_address: "0x40"    # misst ~5 V
+  ina226_12v_shunt: "0.01 ohm" # Shunt-Aufdruck R01D, vorlaeufig
+  ina226_5v_shunt: "0.01 ohm"
+  ina226_12v_max_current: "8A" # Testbereich
+  ina226_5v_max_current: "8A"
 
   ds18b20_av_address: "0x0000000000000000"
   ds18b20_cabinet_address: "0x0000000000000000"
