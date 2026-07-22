@@ -194,14 +194,47 @@ light:
             it[idx] = Color(255, 255, 255, 0);
             idx = (idx + 1) % it.size();
       # Namen "Fireplace"/"Aurora"/"Lift Show"/"Fault" muessen bleiben -> Szenen-Skript.
+      # ECHTES FEUER: Fire2012 (Mark Kriegsman / FastLED) mit Schwarzkoerper-
+      # Farbabbildung (HeatColor). Waermezustand pro Pixel in effect_data ->
+      # jeder Strip hat seine eigene Flamme. Regler: Fire Cooling (Flammenhoehe)
+      # und Fire Sparking (ruhig <-> lodernd). Basis (Funken) am Streifenanfang.
       - addressable_lambda:
           name: "Fireplace"
-          update_interval: 50ms
+          update_interval: 30ms
           lambda: |-
-            for (int i = 0; i < it.size(); i++) {
-              int f = random_uint32() % 60;
-              int g = 45 - f / 2; if (g < 0) g = 0;
-              it[i] = Color(210 - f, g, 0, 0);
+            const int N = it.size();
+            if (N < 2) return;
+            auto rnd8 = []() -> int { return (int)(random_uint32() & 0xFF); };
+            auto qsub8 = [](int a, int b) -> uint8_t { int r = a - b; return r < 0 ? 0 : (uint8_t) r; };
+            auto qadd8 = [](int a, int b) -> uint8_t { int r = a + b; return r > 255 ? 255 : (uint8_t) r; };
+            // Schwarzkoerper-Farbe (FastLED HeatColor): schwarz->rot->gelb->weiss.
+            auto heat_color = [](uint8_t temperature) -> Color {
+              uint8_t t192 = (uint8_t) (((uint16_t) temperature * 191) >> 8);
+              uint8_t ramp = (uint8_t) ((t192 & 0x3F) << 2);
+              if (t192 & 0x80) return Color(255, 255, ramp, 0);   // heissester Bereich
+              if (t192 & 0x40) return Color(255, ramp, 0, 0);     // Mitte
+              return Color(ramp, 0, 0, 0);                        // kuehlster Bereich
+            };
+            const int cooling = (int) id(fire_cooling).state;
+            const int sparking = (int) id(fire_sparking).state;
+            // 1) Abkuehlen
+            for (int i = 0; i < N; i++) {
+              int c = ((cooling * 10) / N) + 2;
+              it[i].set_effect_data(qsub8(it[i].get_effect_data(), rnd8() % c));
+            }
+            // 2) Waerme steigt auf und diffundiert
+            for (int k = N - 1; k >= 2; k--) {
+              int h = (it[k - 1].get_effect_data() + it[k - 2].get_effect_data() * 2) / 3;
+              it[k].set_effect_data((uint8_t) h);
+            }
+            // 3) Funken an der Basis
+            if (rnd8() < sparking) {
+              int y = rnd8() % 7;
+              it[y].set_effect_data(qadd8(it[y].get_effect_data(), 160 + rnd8() % 95));
+            }
+            // 4) Temperatur -> Farbe
+            for (int j = 0; j < N; j++) {
+              it[j] = heat_color(it[j].get_effect_data());
             }
       - addressable_rainbow:
           name: "Aurora"
@@ -540,6 +573,26 @@ number:
     initial_value: 35
     on_value:
       - script.execute: apply_light_scene
+  # Feuer-Feintuning (Fire2012). Cooling: hoch = kuerzere Flammen.
+  # Sparking: hoch = loderndes Feuer, niedrig = ruhiges Flackern.
+  - platform: template
+    name: "Fire Cooling"
+    id: fire_cooling
+    optimistic: true
+    restore_value: true
+    min_value: 20
+    max_value: 100
+    step: 1
+    initial_value: 55
+  - platform: template
+    name: "Fire Sparking"
+    id: fire_sparking
+    optimistic: true
+    restore_value: true
+    min_value: 50
+    max_value: 200
+    step: 1
+    initial_value: 120
 
 # =============================================================================
 # SZENEN-ENGINE (Mock)

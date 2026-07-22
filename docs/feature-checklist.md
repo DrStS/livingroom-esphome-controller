@@ -52,6 +52,9 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [~] Effekte: Fireplace, Aurora, Lift Show, Fault, Rainbow, Color Wipe,
       Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk
       (implementiert; nur Pixel-Walk-Bring-up lief, restliche Effekte NOCH NICHT getestet)
+- [~] Echter Feuer-Effekt „Fireplace" = Fire2012 (Kriegsman) mit Schwarzkoerper-
+      Farbabbildung, pro-Pixel-Waerme (effect_data), Regler „Fire Cooling" +
+      „Fire Sparking" (implementiert, visuell noch zu bewerten)
 - [~] Szenen-Select + Intensity-Regler (implementiert, noch nicht in HA getestet)
 - [~] „Effect Speed"-Regler (Entity existiert, wird noch nicht ausgewertet)
 - [ ] Beide Strips synchron schalten (Gruppen-Schalter)
