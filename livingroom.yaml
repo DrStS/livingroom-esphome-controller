@@ -31,6 +31,18 @@ esphome:
   project:
     name: sicklinger.livingroom_controller
     version: "0.1.0"
+  # TEST: beim Booten beide Strips mit dem Pixel-Walk-Chaser starten (ohne HA).
+  on_boot:
+    priority: -100
+    then:
+      - light.turn_on:
+          id: light_sideboard_ambient
+          brightness: 100%
+          effect: "Pixel Walk"
+      - light.turn_on:
+          id: light_cabinet_glass_edge
+          brightness: 100%
+          effect: "Pixel Walk"
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -69,6 +81,23 @@ ethernet:
   interrupt_pin: ${pin_eth_interrupt}
   reset_pin: ${pin_eth_reset}
 
+# Zwei getrennte 1-Wire-Busse: je ein DS18B20 (kein Address noetig).
+one_wire:
+  - platform: gpio
+    pin: ${pin_ds18b20_av}
+    id: onewire_av
+  - platform: gpio
+    pin: ${pin_ds18b20_cabinet}
+    id: onewire_cabinet
+
+# Gemeinsamer I2C-Bus fuer beide INA226 (Module haben eigene Pull-ups).
+i2c:
+  id: bus_i2c
+  sda: ${pin_i2c_sda}
+  scl: ${pin_i2c_scl}
+  scan: true
+  frequency: 50kHz
+
 # =============================================================================
 # MOCK-ZUSTAND (nur waehrend Mock-Phase; entfaellt beim Umbau auf living_room)
 # =============================================================================
@@ -95,89 +124,73 @@ globals:
     initial_value: "false"
 
 # =============================================================================
-# LICHTER (3x RGBW)
-# TODO HARDWARE (LED): Template-Outputs entfernen und pro Licht auf
-#   platform: esp32_rmt_led_strip (pin: ${pin_led_*}, num_leds: ${led_*_pixels},
-#   rgb_order: GRBW, chipset: ws2812) umstellen. Namen unveraendert lassen!
+# LICHTER -- 2 Strips (wie Original-Hardware): Sideboard + Cabinet Glass Edge,
+# beide SK6812 RGBW adressierbar. (Es gibt physisch keinen dritten Strip.)
 # =============================================================================
 output:
-  - platform: template
-    id: out_sideboard_r
-    type: float
-    write_action: []
-  - platform: template
-    id: out_sideboard_g
-    type: float
-    write_action: []
-  - platform: template
-    id: out_sideboard_b
-    type: float
-    write_action: []
-  - platform: template
-    id: out_sideboard_w
-    type: float
-    write_action: []
+  # Luefter-PWM (ECHT, LEDC 25 kHz)
+  - platform: ledc
+    id: out_fan_pwm
+    pin: ${pin_fan_pwm}
+    frequency: 25000 Hz
 
-  - platform: template
-    id: out_glass_edge_r
-    type: float
-    write_action: []
-  - platform: template
-    id: out_glass_edge_g
-    type: float
-    write_action: []
-  - platform: template
-    id: out_glass_edge_b
-    type: float
-    write_action: []
-  - platform: template
-    id: out_glass_edge_w
-    type: float
-    write_action: []
-
-  - platform: template
-    id: out_inner_diffuser_r
-    type: float
-    write_action: []
-  - platform: template
-    id: out_inner_diffuser_g
-    type: float
-    write_action: []
-  - platform: template
-    id: out_inner_diffuser_b
-    type: float
-    write_action: []
-  - platform: template
-    id: out_inner_diffuser_w
-    type: float
-    write_action: []
+  # Motor IBT-2 (TEST): 2x LEDC-PWM + Enable als GPIO-Ausgang
+  - platform: ledc
+    id: out_motor_rpwm
+    pin: ${pin_motor_rpwm}
+    frequency: ${motor_pwm_frequency}
+  - platform: ledc
+    id: out_motor_lpwm
+    pin: ${pin_motor_lpwm}
+    frequency: ${motor_pwm_frequency}
+  - platform: gpio
+    id: out_motor_enable
+    pin: ${pin_motor_ren}
 
 light:
-  - platform: rgbw
+  # --- Sideboard Ambient (ECHT, SK6812 RGBW, GPIO45) ---
+  - platform: esp32_rmt_led_strip
     id: light_sideboard_ambient
     name: "Sideboard Ambient"
-    red: out_sideboard_r
-    green: out_sideboard_g
-    blue: out_sideboard_b
-    white: out_sideboard_w
+    pin: ${pin_led_sideboard}
+    num_leds: ${led_sideboard_pixels}
+    chipset: SK6812
+    rgb_order: GRB
+    is_rgbw: true
+    # Strip 1 bekommt den einzigen DMA-RMT-Kanal -> flimmerfrei trotz W5500-Interruptlast.
+    use_dma: true
+    rmt_symbols: 1024
+    use_psram: false
+    max_refresh_rate: 20ms
     restore_mode: RESTORE_DEFAULT_OFF
-    effects: &scene_effects
-      # TODO HARDWARE (LED): Bei Umstieg auf esp32_rmt_led_strip diese Effekte
-      # durch addressable_* / addressable_lambda ersetzen (echtes Kaminfeuer,
-      # Lauflicht pro Pixel). Namen unveraendert lassen, dann bleibt die
-      # Szenen-Logik (script apply_light_scene) gueltig.
-      - flicker:
+    effects: &led_effects
+      # TEST: eine einzelne LED wandert durch den Strip (Pixel-fuer-Pixel-Check).
+      - addressable_lambda:
+          name: "Pixel Walk"
+          update_interval: 150ms
+          lambda: |-
+            static int idx = 0;
+            if (initial_run) idx = 0;
+            for (int i = 0; i < it.size(); i++) it[i] = Color(0, 0, 0, 0);
+            it[idx] = Color(255, 255, 255, 0);
+            idx = (idx + 1) % it.size();
+      # Namen "Fireplace"/"Aurora"/"Lift Show"/"Fault" muessen bleiben -> Szenen-Skript.
+      - addressable_lambda:
           name: "Fireplace"
-          alpha: 90%
-          intensity: 28%
-      - random:
+          update_interval: 50ms
+          lambda: |-
+            for (int i = 0; i < it.size(); i++) {
+              int f = random_uint32() % 60;
+              int g = 45 - f / 2; if (g < 0) g = 0;
+              it[i] = Color(210 - f, g, 0, 0);
+            }
+      - addressable_rainbow:
           name: "Aurora"
-          transition_length: 6s
-          update_interval: 7s
-      - pulse:
+          speed: 8
+          width: 50
+      - addressable_scan:
           name: "Lift Show"
-          transition_length: 1500ms
-          update_interval: 3s
+          move_interval: 80ms
       - strobe:
           name: "Fault"
           colors:
@@ -190,24 +203,36 @@ light:
               duration: 400ms
             - state: false
               duration: 400ms
-  - platform: rgbw
+      - addressable_rainbow:
+          name: "Rainbow"
+      - addressable_color_wipe:
+          name: "Color Wipe"
+      - addressable_scan:
+          name: "Scan"
+      - addressable_twinkle:
+          name: "Twinkle"
+      - addressable_random_twinkle:
+          name: "Random Twinkle"
+      - addressable_fireworks:
+          name: "Fireworks"
+      - pulse:
+          name: "Pulse"
+  # --- Cabinet Glass Edge (ECHT, SK6812 RGBW, GPIO46) ---
+  - platform: esp32_rmt_led_strip
     id: light_cabinet_glass_edge
     name: "Cabinet Glass Edge"
-    red: out_glass_edge_r
-    green: out_glass_edge_g
-    blue: out_glass_edge_b
-    white: out_glass_edge_w
+    pin: ${pin_led_glass_edge}
+    num_leds: ${led_glass_edge_pixels}
+    chipset: SK6812
+    rgb_order: GRB
+    is_rgbw: true
+    # non-DMA (nur 1 DMA-Kanal am S3); 144 = 3 HW-Bloecke.
+    use_dma: false
+    rmt_symbols: 144
+    use_psram: false
+    max_refresh_rate: 20ms
     restore_mode: RESTORE_DEFAULT_OFF
-    effects: *scene_effects
-  - platform: rgbw
-    id: light_cabinet_inner_diffuser
-    name: "Cabinet Inner Diffuser"
-    red: out_inner_diffuser_r
-    green: out_inner_diffuser_g
-    blue: out_inner_diffuser_b
-    white: out_inner_diffuser_w
-    restore_mode: RESTORE_DEFAULT_OFF
-    effects: *scene_effects
+    effects: *led_effects
 
 # =============================================================================
 # TV-LIFT (Cover)
@@ -249,137 +274,97 @@ cover:
 
 # =============================================================================
 # SENSOREN
-# TODO HARDWARE (Strom): rail_* auf platform: ina226 (${ina226_*}) umstellen.
-# TODO HARDWARE (Temp):   av/cabinet auf dallas_temp, livingroom auf sht4x.
-# TODO HARDWARE (Fan):    av_fan_rpm auf pulse_counter (${pin_fan_tach}).
+# ERLEDIGT (Strom): rail_* = 2x INA226 auf gemeinsamem I2C-Bus (${ina226_*}).
+# ERLEDIGT (Temp/Feuchte): av/cabinet = DS18B20 (dallas_temp), Raum = DHT22.
+# ERLEDIGT (Fan): av_fan_rpm = pulse_counter (${pin_fan_tach}), PWM = out_fan_pwm.
 #   Alle Namen/Einheiten unveraendert lassen!
 # =============================================================================
 sensor:
-  # --- INA226 12V-Schiene (Mock) ---
-  - platform: template
-    name: "Rail 12V Current"
-    id: rail_12v_current
-    unit_of_measurement: "A"
-    device_class: current
-    state_class: measurement
-    accuracy_decimals: 3
+  # --- INA226 12V-Schiene (ECHT) ---
+  - platform: ina226
+    address: ${ina226_12v_address}
+    shunt_resistance: ${ina226_12v_shunt}
+    max_current: ${ina226_12v_max_current}
+    adc_time: 1100us
+    adc_averaging: 128
     update_interval: 2s
-    lambda: 'return id(mock_lift_moving) ? 3.2f : 1.4f;'
-  - platform: template
-    name: "Rail 12V Power"
-    id: rail_12v_power
-    unit_of_measurement: "W"
-    device_class: power
-    state_class: measurement
-    accuracy_decimals: 2
-    update_interval: 2s
-    lambda: 'return (id(mock_lift_moving) ? 3.2f : 1.4f) * 12.1f;'
-  - platform: template
-    name: "Rail 12V Voltage"
-    id: rail_12v_voltage
-    unit_of_measurement: "V"
-    device_class: voltage
-    state_class: measurement
-    accuracy_decimals: 2
-    update_interval: 2s
-    lambda: 'return 12.1f;'
-  - platform: template
-    name: "Rail 12V Shunt Voltage"
-    id: rail_12v_shunt_voltage
-    unit_of_measurement: "V"
-    device_class: voltage
-    state_class: measurement
-    accuracy_decimals: 4
-    entity_category: diagnostic
-    update_interval: 2s
-    lambda: 'return (id(mock_lift_moving) ? 3.2f : 1.4f) * 0.001f;'
+    current:
+      name: "Rail 12V Current"
+      id: rail_12v_current
+    power:
+      name: "Rail 12V Power"
+      id: rail_12v_power
+    bus_voltage:
+      name: "Rail 12V Voltage"
+      id: rail_12v_voltage
+    shunt_voltage:
+      name: "Rail 12V Shunt Voltage"
+      id: rail_12v_shunt_voltage
+      entity_category: diagnostic
 
-  # --- INA226 5V-Schiene (Mock) ---
-  - platform: template
-    name: "Rail 5V Current"
-    id: rail_5v_current
-    unit_of_measurement: "A"
-    device_class: current
-    state_class: measurement
-    accuracy_decimals: 3
+  # --- INA226 5V-Schiene (ECHT) ---
+  - platform: ina226
+    address: ${ina226_5v_address}
+    shunt_resistance: ${ina226_5v_shunt}
+    max_current: ${ina226_5v_max_current}
+    adc_time: 1100us
+    adc_averaging: 128
     update_interval: 2s
-    lambda: 'return 2.1f;'
-  - platform: template
-    name: "Rail 5V Power"
-    id: rail_5v_power
-    unit_of_measurement: "W"
-    device_class: power
-    state_class: measurement
-    accuracy_decimals: 2
-    update_interval: 2s
-    lambda: 'return 2.1f * 5.05f;'
-  - platform: template
-    name: "Rail 5V Voltage"
-    id: rail_5v_voltage
-    unit_of_measurement: "V"
-    device_class: voltage
-    state_class: measurement
-    accuracy_decimals: 2
-    update_interval: 2s
-    lambda: 'return 5.05f;'
-  - platform: template
-    name: "Rail 5V Shunt Voltage"
-    id: rail_5v_shunt_voltage
-    unit_of_measurement: "V"
-    device_class: voltage
-    state_class: measurement
-    accuracy_decimals: 4
-    entity_category: diagnostic
-    update_interval: 2s
-    lambda: 'return 2.1f * 0.001f;'
+    current:
+      name: "Rail 5V Current"
+      id: rail_5v_current
+    power:
+      name: "Rail 5V Power"
+      id: rail_5v_power
+    bus_voltage:
+      name: "Rail 5V Voltage"
+      id: rail_5v_voltage
+    shunt_voltage:
+      name: "Rail 5V Shunt Voltage"
+      id: rail_5v_shunt_voltage
+      entity_category: diagnostic
 
-  # --- Temperaturen / Feuchte (Mock) ---
-  - platform: template
+  # --- Temperaturen (DS18B20, ECHT, je eigener 1-Wire-Bus) ---
+  - platform: dallas_temp
+    one_wire_id: onewire_av
     name: "AV Receiver Temperature"
     id: av_receiver_temperature
-    unit_of_measurement: "°C"
-    device_class: temperature
-    state_class: measurement
-    accuracy_decimals: 1
     update_interval: 10s
-    lambda: 'return 38.5f;'
-  - platform: template
+  - platform: dallas_temp
+    one_wire_id: onewire_cabinet
     name: "Cabinet Temperature"
     id: cabinet_temperature
-    unit_of_measurement: "°C"
-    device_class: temperature
-    state_class: measurement
-    accuracy_decimals: 1
     update_interval: 10s
-    lambda: 'return 29.2f;'
-  - platform: template
-    name: "Livingroom Temperature"
-    id: livingroom_temperature
-    unit_of_measurement: "°C"
-    device_class: temperature
-    state_class: measurement
-    accuracy_decimals: 1
-    update_interval: 30s
-    lambda: 'return 22.4f;'
-  - platform: template
-    name: "Livingroom Humidity"
-    id: livingroom_humidity
-    unit_of_measurement: "%"
-    device_class: humidity
-    state_class: measurement
-    accuracy_decimals: 1
-    update_interval: 30s
-    lambda: 'return 45.0f;'
 
-  # --- Luefter-Drehzahl (Mock) ---
-  - platform: template
+  # --- Raum Temp/Feuchte (DHT22, ECHT) ---
+  - platform: dht
+    pin: ${pin_dht}
+    model: DHT22
+    update_interval: 30s
+    temperature:
+      name: "Livingroom Temperature"
+      id: livingroom_temperature
+    humidity:
+      name: "Livingroom Humidity"
+      id: livingroom_humidity
+
+  # --- Luefter-Drehzahl (ECHT, pulse_counter) ---
+  # 2 Pulse/Umdrehung -> multiply 0.5 rechnet pulses/min in rpm um.
+  # pullup: true nutzt den internen Pull-up (falls kein externer bestueckt).
+  - platform: pulse_counter
     name: "AV Fan RPM"
     id: av_fan_rpm
+    pin:
+      number: ${pin_fan_tach}
+      mode:
+        input: true
+        pullup: true
     unit_of_measurement: "rpm"
     state_class: measurement
     accuracy_decimals: 0
-    update_interval: 5s
-    lambda: 'return 1200.0f;'
+    update_interval: 1s
+    filters:
+      - multiply: 0.5
 
   # --- Lift-Diagnose (Mock) ---
   - platform: template
@@ -492,41 +477,32 @@ script:
           if (s == "Manual") {
             clear_eff(id(light_sideboard_ambient));
             clear_eff(id(light_cabinet_glass_edge));
-            clear_eff(id(light_cabinet_inner_diffuser));
           } else if (s == "Cinema") {
             const float b2 = bri * 0.5f;
             set_light(id(light_sideboard_ambient), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
             set_light(id(light_cabinet_glass_edge), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
-            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
           } else if (s == "Fireplace") {
             set_light(id(light_sideboard_ambient), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
             set_light(id(light_cabinet_glass_edge), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
-            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
           } else if (s == "Aurora") {
             set_light(id(light_sideboard_ambient), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
             set_light(id(light_cabinet_glass_edge), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
-            set_light(id(light_cabinet_inner_diffuser), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
           } else if (s == "Sunset") {
             const float b2 = bri * 0.8f;
             set_light(id(light_sideboard_ambient), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
             set_light(id(light_cabinet_glass_edge), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
-            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
           } else if (s == "Glass Trace") {
             set_light(id(light_cabinet_glass_edge), 0.0f, 0.4f, 1.0f, 0.0f, bri, "Lift Show");
             set_light(id(light_sideboard_ambient), 0.0f, 0.2f, 0.5f, 0.0f, bri * 0.3f, "None");
-            set_light(id(light_cabinet_inner_diffuser), 0.0f, 0.2f, 0.5f, 0.0f, bri * 0.3f, "None");
           } else if (s == "Lift Show") {
             set_light(id(light_sideboard_ambient), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
             set_light(id(light_cabinet_glass_edge), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
-            set_light(id(light_cabinet_inner_diffuser), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
           } else if (s == "Maintenance") {
             set_light(id(light_sideboard_ambient), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
             set_light(id(light_cabinet_glass_edge), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
-            set_light(id(light_cabinet_inner_diffuser), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
           } else if (s == "Fault") {
             set_light(id(light_sideboard_ambient), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
             set_light(id(light_cabinet_glass_edge), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
-            set_light(id(light_cabinet_inner_diffuser), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
           }
 
 # =============================================================================
@@ -545,3 +521,36 @@ interval:
               id(mock_lift_position) += (delta > 0.0f ? 0.8f : -0.8f);
             }
           }
+
+  # TEST: Luefter-Drehzahlrampe -- faehrt zyklisch ~30% -> 100% Duty in 17 s.
+  # 17 s (statt 5 s) aliast nicht mit dem 1-s-RPM-Fenster -> Rampe klar sichtbar.
+  # 30% ist ein Platzhalter fuer ~500 rpm; nach RPM-Sicht anpassen.
+  - interval: 100ms
+    then:
+      - lambda: |-
+          static float t = 0.0f;
+          t += 0.1f;
+          if (t >= 17.0f) t = 0.0f;
+          const float duty = 0.30f + 0.70f * (t / 17.0f);
+          id(out_fan_pwm).set_level(duty);
+
+  # TEST: Motor IBT-2 -- 5 s links, dann 5 s rechts, 50 % Duty, Endlosschleife.
+  # WICHTIG: Vor dem Umschalten immer erst die Gegenseite auf 0 setzen
+  # (verhindert BTS7960-Shoot-Through/Kurzschluss der Halbbruecken).
+  # ACHTUNG SICHERHEIT: faehrt den ECHTEN TV-Lift-Motor dauerhaft ohne
+  # Endschalter-Schutz in beide Richtungen -> nur bei freilaufender Mechanik
+  # oder unter Aufsicht mit griffbereiter Stromtrennung betreiben!
+  - interval: 5s
+    then:
+      - lambda: |-
+          static bool right = false;
+          right = !right;
+          id(out_motor_enable).turn_on();
+          if (right) {
+            id(out_motor_lpwm).set_level(0.0f);
+            id(out_motor_rpwm).set_level(0.5f);
+          } else {
+            id(out_motor_rpwm).set_level(0.0f);
+            id(out_motor_lpwm).set_level(0.5f);
+          }
+
