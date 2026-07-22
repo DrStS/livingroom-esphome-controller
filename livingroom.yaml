@@ -71,6 +71,9 @@ external_components:
 logger:
   level: INFO
 
+# Diagnose-Rohdaten (Heap/Loop-Zeit) fuer die debug-Sensoren.
+debug:
+
 api:
   encryption:
     key: !secret wohnzimmer_api_key
@@ -381,6 +384,25 @@ sensor:
     filters:
       - multiply: 0.5
 
+  # --- System-Diagnose ---
+  - platform: uptime
+    name: "Uptime"
+    id: sys_uptime
+    entity_category: diagnostic
+    update_interval: 30s
+  - platform: internal_temperature
+    name: "ESP Temperature"
+    id: sys_esp_temperature
+    entity_category: diagnostic
+    update_interval: 30s
+  - platform: debug
+    free:
+      name: "Heap Free"
+      entity_category: diagnostic
+    loop_time:
+      name: "Loop Time"
+      entity_category: diagnostic
+
   # --- Lift-Diagnose (Mock) ---
   - platform: template
     name: "TV Lift Position Pulses"
@@ -409,6 +431,20 @@ binary_sensor:
     id: tv_lift_fault
     device_class: problem
     lambda: 'return id(mock_lift_fault);'
+  # API-Verbindungsstatus (Home Assistant erreichbar?)
+  - platform: status
+    name: "API Connected"
+    id: sys_api_connected
+    entity_category: diagnostic
+
+text_sensor:
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"
+      entity_category: diagnostic
+    mac_address:
+      name: "MAC Address"
+      entity_category: diagnostic
 
 button:
   - platform: template
