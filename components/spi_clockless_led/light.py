@@ -1,7 +1,7 @@
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components import esp32, light
-from esphome.components.esp32 import add_idf_component, include_builtin_idf_component
+from esphome.components.esp32 import include_builtin_idf_component
 import esphome.config_validation as cv
 from esphome.const import (
     CONF_INVERTED,
@@ -18,6 +18,7 @@ CODEOWNERS = ["@livingroom"]
 DEPENDENCIES = ["esp32"]
 
 CONF_SPI_HOST = "spi_host"
+CONF_CLOCK_SPEED = "clock_speed"
 
 spi_clockless_led_ns = cg.esphome_ns.namespace("spi_clockless_led")
 SPIClocklessLedStrip = spi_clockless_led_ns.class_(
@@ -51,6 +52,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RGB_ORDER, default="GRB"): cv.enum(RGB_ORDERS, upper=True),
             cv.Optional(CONF_IS_RGBW, default=False): cv.boolean,
             cv.Optional(CONF_SPI_HOST, default="SPI3"): cv.enum(SPI_HOSTS, upper=True),
+            cv.Optional(CONF_CLOCK_SPEED, default=3333333): cv.int_range(
+                min=2500000, max=4000000
+            ),
             cv.Optional(CONF_MAX_REFRESH_RATE): cv.positive_time_period_microseconds,
         }
     ).extend(cv.COMPONENT_SCHEMA),
@@ -58,11 +62,8 @@ CONFIG_SCHEMA = cv.All(
 
 
 async def to_code(config):
-    # IDF-Treiber sicherstellen (von ESPHome standardmaessig ausgeschlossen).
+    # ESP-IDF SPI-Master-Treiber sicherstellen (von ESPHome standardmaessig ausgeschlossen).
     include_builtin_idf_component("esp_driver_spi")
-    include_builtin_idf_component("esp_driver_rmt")
-    # Erprobter Espressif-LED-Treiber (SPI-DMA-Backend) aus der Registry.
-    add_idf_component(name="espressif/led_strip", ref="^3.0.0")
 
     var = cg.new_Pvariable(config[CONF_OUTPUT_ID])
     await light.register_light(var, config)
@@ -75,5 +76,6 @@ async def to_code(config):
     cg.add(var.set_rgb_order(config[CONF_RGB_ORDER]))
     cg.add(var.set_is_rgbw(config[CONF_IS_RGBW]))
     cg.add(var.set_spi_host(config[CONF_SPI_HOST]))
+    cg.add(var.set_clock_speed(config[CONF_CLOCK_SPEED]))
     if CONF_MAX_REFRESH_RATE in config:
         cg.add(var.set_max_refresh_rate(config[CONF_MAX_REFRESH_RATE]))

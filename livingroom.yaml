@@ -281,7 +281,7 @@ light:
     rgb_order: GRB
     is_rgbw: true
     spi_host: SPI3
-    max_refresh_rate: 20ms
+    clock_speed: 3333333
     restore_mode: RESTORE_DEFAULT_OFF
     effects: *led_effects
 

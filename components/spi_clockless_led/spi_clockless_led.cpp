@@ -3,27 +3,46 @@
 #ifdef USE_ESP32
 
 #include "esphome/core/log.h"
+#include <esp_heap_caps.h>
 #include <cstring>
 
 namespace esphome::spi_clockless_led {
 
 static const char *const TAG = "spi_clockless_led";
 
-// RGB-Reihenfolge -> Positionen der Farbkomponenten auf dem Draht.
-static void order_positions(RGBOrder o, uint8_t &r, uint8_t &g, uint8_t &b) {
-  switch (o) {
-    case ORDER_RGB: r = 0; g = 1; b = 2; break;
-    case ORDER_RBG: r = 0; g = 2; b = 1; break;
-    case ORDER_GRB: r = 1; g = 0; b = 2; break;
-    case ORDER_GBR: r = 2; g = 0; b = 1; break;
-    case ORDER_BGR: r = 2; g = 1; b = 0; break;
-    case ORDER_BRG: r = 1; g = 2; b = 0; break;
-    default:        r = 1; g = 0; b = 2; break;  // GRB
-  }
+#ifndef BIT
+#define BIT(n) (1u << (n))
+#endif
+
+// Bewaehrte 3-Bit-Kodierung aus Espressifs led_strip: jedes Datenbit wird als
+// 3 SPI-Bits kodiert ("0" = 100, "1" = 110), ein Farbbyte -> 3 SPI-Bytes,
+// MSB zuerst. Der Puffer muss vorher fuer diese 3 Bytes 0 sein.
+static void spi_encode_byte(uint8_t data, uint8_t *buf) {
+  buf[2] |= data & BIT(0) ? BIT(2) | BIT(1) : BIT(2);
+  buf[2] |= data & BIT(1) ? BIT(5) | BIT(4) : BIT(5);
+  buf[2] |= data & BIT(2) ? BIT(7) : 0x00;
+  buf[1] |= BIT(0);
+  buf[1] |= data & BIT(3) ? BIT(3) | BIT(2) : BIT(3);
+  buf[1] |= data & BIT(4) ? BIT(6) | BIT(5) : BIT(6);
+  buf[0] |= data & BIT(5) ? BIT(1) | BIT(0) : BIT(1);
+  buf[0] |= data & BIT(6) ? BIT(4) | BIT(3) : BIT(4);
+  buf[0] |= data & BIT(7) ? BIT(7) | BIT(6) : BIT(7);
 }
 
 void SPIClocklessLedStrip::setup() {
+  // Farbkomponenten-Positionen aus rgb_order ableiten.
+  switch (this->rgb_order_) {
+    case ORDER_RGB: this->r_pos_ = 0; this->g_pos_ = 1; this->b_pos_ = 2; break;
+    case ORDER_RBG: this->r_pos_ = 0; this->g_pos_ = 2; this->b_pos_ = 1; break;
+    case ORDER_GRB: this->r_pos_ = 1; this->g_pos_ = 0; this->b_pos_ = 2; break;
+    case ORDER_GBR: this->r_pos_ = 2; this->g_pos_ = 0; this->b_pos_ = 1; break;
+    case ORDER_BGR: this->r_pos_ = 2; this->g_pos_ = 1; this->b_pos_ = 0; break;
+    case ORDER_BRG: this->r_pos_ = 1; this->g_pos_ = 2; this->b_pos_ = 0; break;
+  }
+  this->w_pos_ = 3;
+
   const size_t buffer_size = this->get_buffer_size_();
+  const size_t spi_buffer_size = this->get_spi_buffer_size_();
 
   RAMAllocator<uint8_t> allocator(RAMAllocator<uint8_t>::ALLOC_INTERNAL);
   this->buf_ = allocator.allocate(buffer_size);
@@ -36,43 +55,51 @@ void SPIClocklessLedStrip::setup() {
   memset(this->buf_, 0, buffer_size);
   memset(this->effect_data_, 0, this->num_leds_);
 
-  uint8_t rp, gp, bp;
-  order_positions(this->rgb_order_, rp, gp, bp);
-
-  led_color_component_format_t fmt;
-  fmt.format_id = 0;
-  fmt.format.r_pos = rp;
-  fmt.format.g_pos = gp;
-  fmt.format.b_pos = bp;
-  fmt.format.w_pos = 3;
-  fmt.format.reserved = 0;
-  fmt.format.bytes_per_color = 1;
-  fmt.format.num_components = this->is_rgbw_ ? 4 : 3;
-
-  led_strip_config_t strip_config;
-  memset(&strip_config, 0, sizeof(strip_config));
-  strip_config.strip_gpio_num = this->pin_;
-  strip_config.max_leds = this->num_leds_;
-  strip_config.led_model = LED_MODEL_SK6812;
-  strip_config.color_component_format = fmt;
-  strip_config.flags.invert_out = this->inverted_ ? 1 : 0;
-
-  led_strip_spi_config_t spi_config;
-  memset(&spi_config, 0, sizeof(spi_config));
-  spi_config.clk_src = SPI_CLK_SRC_DEFAULT;
-  spi_config.spi_bus = (this->spi_host_ == SPI_HOST_2) ? SPI2_HOST : SPI3_HOST;
-  spi_config.flags.with_dma = 1;
-
-  esp_err_t err = led_strip_new_spi_device(&strip_config, &spi_config, &this->strip_);
-  if (err != ESP_OK) {
-    ESP_LOGE(TAG, "led_strip_new_spi_device failed: %d", err);
+  this->spi_buf_ = static_cast<uint8_t *>(
+      heap_caps_malloc(spi_buffer_size, MALLOC_CAP_INTERNAL | MALLOC_CAP_DMA | MALLOC_CAP_8BIT));
+  if (this->spi_buf_ == nullptr) {
+    ESP_LOGE(TAG, "Cannot allocate SPI DMA buffer!");
     this->mark_failed();
     return;
   }
+  memset(this->spi_buf_, 0, spi_buffer_size);
+
+  const spi_host_device_t host = (this->spi_host_ == SPI_HOST_2) ? SPI2_HOST : SPI3_HOST;
+
+  spi_bus_config_t buscfg;
+  memset(&buscfg, 0, sizeof(buscfg));
+  buscfg.mosi_io_num = this->pin_;
+  buscfg.miso_io_num = -1;
+  buscfg.sclk_io_num = -1;
+  buscfg.quadwp_io_num = -1;
+  buscfg.quadhd_io_num = -1;
+  buscfg.max_transfer_sz = static_cast<int>(spi_buffer_size);
+  if (spi_bus_initialize(host, &buscfg, SPI_DMA_CH_AUTO) != ESP_OK) {
+    ESP_LOGE(TAG, "spi_bus_initialize failed");
+    this->mark_failed();
+    return;
+  }
+
+  spi_device_interface_config_t devcfg;
+  memset(&devcfg, 0, sizeof(devcfg));
+  devcfg.clock_source = SPI_CLK_SRC_DEFAULT;
+  devcfg.clock_speed_hz = static_cast<int>(this->clock_speed_);
+  devcfg.mode = 0;
+  devcfg.spics_io_num = -1;
+  devcfg.queue_size = 4;
+  if (spi_bus_add_device(host, &devcfg, &this->spi_dev_) != ESP_OK) {
+    ESP_LOGE(TAG, "spi_bus_add_device failed");
+    this->mark_failed();
+    return;
+  }
+
+  int actual_khz = 0;
+  spi_device_get_actual_freq(this->spi_dev_, &actual_khz);
+  ESP_LOGI(TAG, "SPI clockless LED ready (pin %u, %d kHz, %u LEDs)", this->pin_, actual_khz, this->num_leds_);
 }
 
 void SPIClocklessLedStrip::write_state(light::LightState *state) {
-  if (this->is_failed() || this->strip_ == nullptr)
+  if (this->is_failed() || this->spi_dev_ == nullptr)
     return;
 
   const uint32_t now = micros();
@@ -84,18 +111,26 @@ void SPIClocklessLedStrip::write_state(light::LightState *state) {
   this->last_refresh_ = now;
   this->mark_shown_();
 
-  const uint8_t mult = this->is_rgbw_ ? 4 : 3;
+  const uint8_t bpp = this->bytes_per_pixel_();
   for (int i = 0; i < this->num_leds_; i++) {
-    const uint8_t *p = this->buf_ + (i * mult);
-    if (this->is_rgbw_) {
-      led_strip_set_pixel_rgbw(this->strip_, i, p[0], p[1], p[2], p[3]);
-    } else {
-      led_strip_set_pixel(this->strip_, i, p[0], p[1], p[2]);
-    }
+    const uint8_t *src = this->buf_ + (i * bpp);         // r,g,b(,w)
+    uint8_t *dst = this->spi_buf_ + (i * bpp * 3);        // 3 SPI-Bytes je Farbe
+    memset(dst, 0, bpp * 3);
+    spi_encode_byte(src[0], dst + 3 * this->r_pos_);      // rot
+    spi_encode_byte(src[1], dst + 3 * this->g_pos_);      // gruen
+    spi_encode_byte(src[2], dst + 3 * this->b_pos_);      // blau
+    if (this->is_rgbw_)
+      spi_encode_byte(src[3], dst + 3 * this->w_pos_);    // weiss
   }
-  esp_err_t err = led_strip_refresh(this->strip_);
+
+  spi_transaction_t trans;
+  memset(&trans, 0, sizeof(trans));
+  trans.length = this->get_spi_buffer_size_() * 8;  // Bits
+  trans.tx_buffer = this->spi_buf_;
+
+  const esp_err_t err = spi_device_transmit(this->spi_dev_, &trans);
   if (err != ESP_OK) {
-    ESP_LOGW(TAG, "led_strip_refresh failed: %d", err);
+    ESP_LOGW(TAG, "SPI transmit failed: %d", err);
     this->status_set_warning();
     return;
   }
@@ -103,10 +138,10 @@ void SPIClocklessLedStrip::write_state(light::LightState *state) {
 }
 
 // buf_ speichert im RGB(W)-Standardformat (r,g,b,w); die Reihenfolge auf dem
-// Draht macht led_strip via color_component_format.
+// Draht macht write_state via r_pos_/g_pos_/b_pos_/w_pos_.
 light::ESPColorView SPIClocklessLedStrip::get_view_internal(int32_t index) const {
-  const uint8_t mult = this->is_rgbw_ ? 4 : 3;
-  uint8_t *base = this->buf_ + (index * mult);
+  const uint8_t bpp = this->bytes_per_pixel_();
+  uint8_t *base = this->buf_ + (index * bpp);
   return {base + 0,
           base + 1,
           base + 2,
@@ -117,12 +152,14 @@ light::ESPColorView SPIClocklessLedStrip::get_view_internal(int32_t index) const
 
 void SPIClocklessLedStrip::dump_config() {
   ESP_LOGCONFIG(TAG,
-                "SPI Clockless LED Strip (Espressif led_strip):\n"
+                "SPI Clockless LED Strip (SK6812-getunt):\n"
                 "  Pin (MOSI): %u\n"
                 "  SPI host: SPI%u\n"
+                "  Clock: %u Hz\n"
                 "  RGBW: %s\n"
                 "  Number of LEDs: %u",
-                this->pin_, (this->spi_host_ == SPI_HOST_2) ? 2 : 3, YESNO(this->is_rgbw_), this->num_leds_);
+                this->pin_, (this->spi_host_ == SPI_HOST_2) ? 2 : 3, this->clock_speed_, YESNO(this->is_rgbw_),
+                this->num_leds_);
 }
 
 float SPIClocklessLedStrip::get_setup_priority() const { return setup_priority::HARDWARE; }
