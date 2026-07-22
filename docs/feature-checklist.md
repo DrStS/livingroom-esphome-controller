@@ -40,11 +40,13 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [ ] Min-Duty / Anlaufkick (damit Lüfter sicher anläuft)
 
 ## 5. LED-Strips (2× SK6812 RGBW)
-- [x] Sideboard (GPIO45, RMT-DMA): An/Aus/Helligkeit/RGBW
-- [x] Glass Edge (GPIO46, SPI-DMA): An/Aus/Helligkeit/RGBW
-- [x] Effekte: Fireplace, Aurora, Lift Show, Fault, Rainbow, Color Wipe,
+- [x] Sideboard (GPIO45, RMT-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
+- [x] Glass Edge (GPIO46, SPI-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
+- [x] Beide Strips flackerfrei (statisches Weiss unter W5500-Last bestaetigt)
+- [~] Effekte: Fireplace, Aurora, Lift Show, Fault, Rainbow, Color Wipe,
       Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk
-- [x] Szenen-Select + Intensity-Regler
+      (implementiert; nur Pixel-Walk-Bring-up lief, restliche Effekte NOCH NICHT getestet)
+- [~] Szenen-Select + Intensity-Regler (implementiert, noch nicht in HA getestet)
 - [~] „Effect Speed"-Regler (Entity existiert, wird noch nicht ausgewertet)
 - [ ] Beide Strips synchron schalten (Gruppen-Schalter)
 - [ ] Szenen um Speed-Kopplung erweitern
