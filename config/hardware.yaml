@@ -1,8 +1,8 @@
 # ZENTRALE HARDWAREPARAMETER
 
 substitutions:
-  led_sideboard_pixels: "112"
-  led_glass_edge_pixels: "103"
+  led_sideboard_pixels: "111"
+  led_glass_edge_pixels: "102"
   # Cabinet Glass Edge Zone-Map (verifiziert per Zone-Check):
   # 3x (25 Kante + 9 Spot) = 102 aktive LEDs + 1 Rest = 103 gesamt.
   # Reihenfolge: Kante Unten -> Spot Unten -> Kante Mitte -> Spot Mitte -> Kante Oben -> Spot Oben

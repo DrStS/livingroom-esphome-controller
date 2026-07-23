@@ -55,13 +55,12 @@ esphome:
           level: 45%
       # Feuer-Effekt auf beide Strips nach kurzem Delay (wartet auf Light-Init).
       - delay: 2s
+      # DIAGNOSE Sideboard: Feuer + letzte LED weiss (Laengencheck).
       - light.turn_on:
           id: light_sideboard_ambient
           brightness: 100%
-          effect: "Fireplace"
-      # DIAGNOSE: Glass Edge Zonen-Farben (26-9-26-9-24-9 = 103).
-      # Rot=Kante Unten, Gruen=Spot Unten, Blau=Kante Mitte,
-      # Gelb=Spot Mitte, Cyan=Kante Oben, Weiss=Spot Oben.
+          effect: "Length Check"
+      # DIAGNOSE: Glass Edge Zonen-Farben (25-9-25-9-25-9 = 102).
       - light.turn_on:
           id: light_cabinet_glass_edge
           brightness: 100%
@@ -350,12 +349,19 @@ light:
           name: "Fireworks"
       - pulse:
           name: "Pulse"
-      # DIAGNOSE: Zonen-Check fuer Cabinet Glass Edge (26-9-26-9-24-9).
+      # DIAGNOSE: Laengen-Check (alles rot, letzte 4 LEDs weiss).
+      - addressable_lambda:
+          name: "Length Check"
+          update_interval: 500ms
+          lambda: |-
+            for (int i = 0; i < it.size() - 4; i++) it[i] = Color(255, 0, 0, 0);
+            for (int i = it.size() - 4; i < it.size(); i++) it[i] = Color(255, 255, 255, 255);
+      # DIAGNOSE: Zonen-Check fuer Cabinet Glass Edge (25-9-25-9-25-9 = 102 + 1 Rest).
       - addressable_lambda:
           name: "Zone Check"
           update_interval: 500ms
           lambda: |-
-            const int zones[] = {26, 9, 26, 9, 24, 9};
+            const int zones[] = {25, 9, 25, 9, 25, 9};
             const Color colors[] = {
               Color(255, 0, 0, 0),     // Rot = Kante Unten
               Color(0, 255, 0, 0),     // Gruen = Spot Unten
@@ -371,7 +377,7 @@ light:
               }
               offset += zones[z];
             }
-            for (int i = offset; i < it.size(); i++) it[i] = Color(255, 0, 255, 0);
+            for (int i = offset; i < it.size(); i++) it[i] = Color(255, 255, 255, 255);
   # --- Cabinet Glass Edge (SK6812 RGBW, GPIO46) ueber RMT-DMA ---
   # Langes Kabel -> RMT hat mehr Signalreserve als der SPI-Stream und laeuft
   # damit auch ueber die lange Leitung einwandfrei (per Treiber-Tausch bestaetigt).
