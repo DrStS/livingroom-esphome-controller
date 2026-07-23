@@ -53,16 +53,19 @@ esphome:
       - output.set_level:
           id: out_fan_pwm
           level: 45%
-      # DIAGNOSE/DEFAULT: Feuer-Effekt direkt beim Boot auf beide Strips legen
-      # (unabhaengig von HA/Szene) -> schliesst ein Steuerungsproblem aus.
+      # Feuer-Effekt auf beide Strips nach kurzem Delay (wartet auf Light-Init).
+      - delay: 2s
       - light.turn_on:
           id: light_sideboard_ambient
           brightness: 100%
           effect: "Fireplace"
+      # DIAGNOSE: Glass Edge Zonen-Farben (26-9-26-9-24-9 = 103).
+      # Rot=Kante Unten, Gruen=Spot Unten, Blau=Kante Mitte,
+      # Gelb=Spot Mitte, Cyan=Kante Oben, Weiss=Spot Oben.
       - light.turn_on:
           id: light_cabinet_glass_edge
           brightness: 100%
-          effect: "Fireplace"
+          effect: "Zone Check"
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -216,51 +219,104 @@ light:
             for (int i = 0; i < it.size(); i++) it[i] = Color(0, 0, 0, 0);
             it[idx] = Color(255, 255, 255, 0);
             idx = (idx + 1) % it.size();
-      # Namen "Fireplace"/"Aurora"/"Lift Show"/"Fault" muessen bleiben -> Szenen-Skript.
-      # ECHTES FEUER: Fire2012 (Mark Kriegsman / FastLED) mit Schwarzkoerper-
-      # Farbabbildung (HeatColor). Waermezustand pro Pixel in effect_data ->
-      # jeder Strip hat seine eigene Flamme. Regler: Fire Cooling (Flammenhoehe)
-      # und Fire Sparking (ruhig <-> lodernd). Basis (Funken) am Streifenanfang.
+      # REALISTISCHES FEUER: HorizontalFire fuer SK6812 RGBW.
+      # Mehrskalige Noise-Ebenen + Diffusion + zustandsbehaftete Aufflacker +
+      # horizontale Drift + Blackbody-RGBW-Palette. Empfohlen: 25 ms.
       - addressable_lambda:
           name: "Fireplace"
-          update_interval: 30ms
+          update_interval: 25ms
           lambda: |-
-            const int N = it.size();
-            if (N < 2) return;
-            auto rnd8 = []() -> int { return (int)(random_uint32() & 0xFF); };
-            auto qsub8 = [](int a, int b) -> uint8_t { int r = a - b; return r < 0 ? 0 : (uint8_t) r; };
-            auto qadd8 = [](int a, int b) -> uint8_t { int r = a + b; return r > 255 ? 255 : (uint8_t) r; };
-            // Schwarzkoerper-Farbe (FastLED HeatColor): schwarz->rot->gelb->weiss.
-            auto heat_color = [](uint8_t temperature) -> Color {
-              uint8_t t192 = (uint8_t) (((uint16_t) temperature * 191) >> 8);
-              uint8_t ramp = (uint8_t) ((t192 & 0x3F) << 2);
-              if (t192 & 0x80) return Color(255, 255, ramp, 0);   // heissester Bereich
-              if (t192 & 0x40) return Color(255, ramp, 0, 0);     // Mitte
-              return Color(ramp, 0, 0, 0);                        // kuehlster Bereich
-            };
-            // Fest eingestellt (kein externer Regler): niedriges Cooling ->
-            // hohe Flammen, die den langen Streifen fuellen; lebhaftes Sparking.
-            const int cooling = 18;
-            const int sparking = 120;
-            // 1) Abkuehlen
-            for (int i = 0; i < N; i++) {
-              int c = ((cooling * 10) / N) + 2;
-              it[i].set_effect_data(qsub8(it[i].get_effect_data(), rnd8() % c));
+            static constexpr int MAX_LEDS = 512;
+            static constexpr int MAX_FLARES = 6;
+            struct FireFlare { bool active; bool rising; int32_t center_q8; int16_t velocity_q8; uint8_t radius; uint8_t level; uint8_t peak; uint8_t attack; uint8_t decay; };
+            static uint8_t next_heat[MAX_LEDS];
+            static uint8_t slow_value[MAX_LEDS]; static uint8_t slow_target[MAX_LEDS];
+            static uint8_t medium_value[MAX_LEDS]; static uint8_t medium_target[MAX_LEDS];
+            static uint8_t fast_value[MAX_LEDS]; static uint8_t fast_target[MAX_LEDS];
+            static FireFlare flares[MAX_FLARES];
+            static uint32_t frame = 0;
+            static uint32_t slow_phase_q8 = 0, medium_phase_q8 = 0, fast_phase_q8 = 0;
+            const int led_count = (it.size() < MAX_LEDS) ? static_cast<int>(it.size()) : MAX_LEDS;
+            if (led_count <= 0) return;
+            const int slow_spacing = 18; const int medium_spacing = 7; const int fast_spacing = 3;
+            const int slow_count = (led_count + slow_spacing - 1) / slow_spacing + 2;
+            const int medium_count = (led_count + medium_spacing - 1) / medium_spacing + 2;
+            const int fast_count = (led_count + fast_spacing - 1) / fast_spacing + 2;
+            auto random_range = [&](int mn, int mx) -> uint8_t { if (mx <= mn) return (uint8_t)mn; return (uint8_t)(mn + random_uint32() % (uint32_t)(mx - mn + 1)); };
+            auto approach_value = [](uint8_t cur, uint8_t tgt, uint8_t sh) -> uint8_t { int d = (int)tgt - (int)cur; if (!d) return cur; int s = d >> sh; if (!s) s = (d > 0) ? 1 : -1; int r = (int)cur + s; if (r < 0) r = 0; if (r > 255) r = 255; return (uint8_t)r; };
+            auto initialize_layer = [&](uint8_t *v, uint8_t *t, int cnt, int mn, int mx) { uint8_t prev = random_range(mn, mx); for (int i = 0; i < cnt; i++) { uint8_t rv = random_range(mn, mx); prev = (uint8_t)(((uint16_t)prev * 2 + rv) / 3); v[i] = prev; t[i] = random_range(mn, mx); } };
+            auto update_layer = [&](uint8_t *v, uint8_t *t, int cnt, uint32_t cadence, uint32_t stagger, uint8_t sh, int mn, int mx) { for (int i = 0; i < cnt; i++) { if (((frame + (uint32_t)i * stagger) % cadence) == 0) t[i] = random_range(mn, mx); v[i] = approach_value(v[i], t[i], sh); } };
+            auto sample_layer = [](const uint8_t *v, int cnt, int sp, uint32_t ph, int px) -> uint8_t { uint32_t period = (uint32_t)cnt * sp * 256UL; uint32_t pos = (uint32_t)px * 256UL + ph; pos %= period; uint32_t np = pos / (uint32_t)sp; int ia = (int)(np >> 8); int ib = (ia + 1 < cnt) ? ia + 1 : 0; uint32_t frac = np & 0xFFUL; uint32_t sf = (frac * frac * (765UL - 2UL * frac)) / 65025UL; uint32_t inv = 255UL - sf; return (uint8_t)(((uint32_t)v[ia] * inv + (uint32_t)v[ib] * sf + 127UL) / 255UL); };
+            if (initial_run) {
+              frame = 0; slow_phase_q8 = 0; medium_phase_q8 = 0; fast_phase_q8 = 0;
+              initialize_layer(slow_value, slow_target, slow_count, 55, 220);
+              initialize_layer(medium_value, medium_target, medium_count, 35, 240);
+              initialize_layer(fast_value, fast_target, fast_count, 20, 235);
+              for (int i = 0; i < MAX_FLARES; i++) { flares[i].active = false; flares[i].level = 0; }
+              int h = 65, tg = 75;
+              for (int i = 0; i < led_count; i++) { if ((i % 8) == 0) tg = 55 + random_uint32() % 55; h = (h * 3 + tg) / 4; it[i].set_effect_data((uint8_t)h); }
             }
-            // 2) Waerme steigt auf und diffundiert
-            for (int k = N - 1; k >= 2; k--) {
-              int h = (it[k - 1].get_effect_data() + it[k - 2].get_effect_data() * 2) / 3;
-              it[k].set_effect_data((uint8_t) h);
+            update_layer(slow_value, slow_target, slow_count, 53, 17, 5, 55, 220);
+            update_layer(medium_value, medium_target, medium_count, 17, 7, 3, 35, 240);
+            update_layer(fast_value, fast_target, fast_count, 5, 3, 2, 20, 235);
+            uint32_t slow_per = (uint32_t)slow_count * slow_spacing * 256UL;
+            uint32_t med_per = (uint32_t)medium_count * medium_spacing * 256UL;
+            uint32_t fast_per = (uint32_t)fast_count * fast_spacing * 256UL;
+            slow_phase_q8 = (slow_phase_q8 + 2UL) % slow_per;
+            medium_phase_q8 = (medium_phase_q8 + med_per - 7UL) % med_per;
+            fast_phase_q8 = (fast_phase_q8 + 17UL) % fast_per;
+            if ((random_uint32() % 68UL) == 0) {
+              for (int i = 0; i < MAX_FLARES; i++) { if (flares[i].active) continue;
+                FireFlare &f = flares[i]; bool hot = (random_uint32() % 100UL) < 16UL;
+                f.active = true; f.rising = true;
+                f.center_q8 = (int32_t)(random_uint32() % (uint32_t)led_count) * 256;
+                f.velocity_q8 = (int16_t)((int)(random_uint32() % 13UL) - 6);
+                if (hot) { f.radius = 1 + random_uint32() % 3; f.level = 8; f.peak = 175 + random_uint32() % 66; f.attack = 28 + random_uint32() % 24; f.decay = 8 + random_uint32() % 9; }
+                else { f.radius = 4 + random_uint32() % 8; f.level = 5; f.peak = 75 + random_uint32() % 86; f.attack = 8 + random_uint32() % 11; f.decay = 2 + random_uint32() % 4; }
+                break; }
             }
-            // 3) Funken an der Basis
-            if (rnd8() < sparking) {
-              int y = rnd8() % 7;
-              it[y].set_effect_data(qadd8(it[y].get_effect_data(), 160 + rnd8() % 95));
+            for (int i = 0; i < MAX_FLARES; i++) { FireFlare &f = flares[i]; if (!f.active) continue;
+              if (f.rising) { int nl = (int)f.level + (int)f.attack; if (nl >= f.peak) { f.level = f.peak; f.rising = false; } else f.level = (uint8_t)nl; }
+              else { if (f.level <= f.decay) { f.active = false; f.level = 0; continue; } f.level -= f.decay; }
+              f.center_q8 += f.velocity_q8;
+              int32_t mx_c = (int32_t)(led_count - 1) * 256;
+              if (f.center_q8 < 0) { f.center_q8 = -f.center_q8; f.velocity_q8 = -f.velocity_q8; }
+              if (f.center_q8 > mx_c) { f.center_q8 = mx_c - (f.center_q8 - mx_c); f.velocity_q8 = -f.velocity_q8; }
             }
-            // 4) Temperatur -> Farbe
-            for (int j = 0; j < N; j++) {
-              it[j] = heat_color(it[j].get_effect_data());
+            for (int i = 0; i < led_count; i++) {
+              int il1 = (i > 0) ? i - 1 : 0; int il2 = (i > 1) ? i - 2 : il1;
+              int ir1 = (i + 1 < led_count) ? i + 1 : led_count - 1; int ir2 = (i + 2 < led_count) ? i + 2 : ir1;
+              int heat = ((int)it[i].get_effect_data() * 6 + (int)it[il1].get_effect_data() * 2 + (int)it[ir1].get_effect_data() * 2 + (int)it[il2].get_effect_data() + (int)it[ir2].get_effect_data()) / 12;
+              int sn = sample_layer(slow_value, slow_count, slow_spacing, slow_phase_q8, i);
+              int mn = sample_layer(medium_value, medium_count, medium_spacing, medium_phase_q8, i);
+              int fn = sample_layer(fast_value, fast_count, fast_spacing, fast_phase_q8, i);
+              int tgt = 42 + sn * 38 / 255 + mn * 48 / 255;
+              if (mn > 150) tgt += (mn - 150) * 30 / 105;
+              int fa = 9 + ((tgt > 70) ? (tgt - 70) / 4 : 0); if (fa > 25) fa = 25;
+              tgt += (fn - 128) * fa / 128;
+              int fb = 0;
+              for (int fi = 0; fi < MAX_FLARES; fi++) { const FireFlare &fl = flares[fi]; if (!fl.active) continue;
+                int cp = (int)((fl.center_q8 + 128) >> 8); int dist = i - cp; if (dist < 0) dist = -dist;
+                if (dist > fl.radius) continue; int rp1 = (int)fl.radius + 1; int rem = rp1 - dist;
+                fb += (int)fl.level * rem * rem / (rp1 * rp1); }
+              heat += (tgt - heat) / 6;
+              heat += fb / 3;
+              heat -= 1; if (heat < 30) heat = 30; if (heat > 255) heat = 255;
+              next_heat[i] = (uint8_t)heat;
             }
+            for (int i = 0; i < led_count; i++) {
+              uint8_t h = next_heat[i]; it[i].set_effect_data(h);
+              uint8_t r = 0, g = 0, b = 0, w = 0;
+              if (h < 48) { r = 5 + (int)h * 45 / 48; }
+              else if (h < 96) { int x = h - 48; r = 50 + x * 130 / 48; g = x * 12 / 48; }
+              else if (h < 144) { int x = h - 96; r = 180 + x * 75 / 48; g = 12 + x * 78 / 48; }
+              else if (h < 192) { int x = h - 144; r = 255; g = 90 + x * 115 / 48; }
+              else if (h < 232) { int x = h - 192; r = 255; g = 205 + x * 50 / 40; w = x * 25 / 40; }
+              else { int x = h - 232; r = 255; g = 255; w = 25 + x * 95 / 23; }
+              it[i] = Color(r, g, b, w);
+            }
+            for (int i = led_count; i < (int)it.size(); i++) it[i] = Color(0, 0, 0, 0);
+            frame++;
       - addressable_rainbow:
           name: "Aurora"
           speed: 8
@@ -294,6 +350,28 @@ light:
           name: "Fireworks"
       - pulse:
           name: "Pulse"
+      # DIAGNOSE: Zonen-Check fuer Cabinet Glass Edge (26-9-26-9-24-9).
+      - addressable_lambda:
+          name: "Zone Check"
+          update_interval: 500ms
+          lambda: |-
+            const int zones[] = {26, 9, 26, 9, 24, 9};
+            const Color colors[] = {
+              Color(255, 0, 0, 0),     // Rot = Kante Unten
+              Color(0, 255, 0, 0),     // Gruen = Spot Unten
+              Color(0, 0, 255, 0),     // Blau = Kante Mitte
+              Color(255, 255, 0, 0),   // Gelb = Spot Mitte
+              Color(0, 255, 255, 0),   // Cyan = Kante Oben
+              Color(0, 0, 0, 255),     // Weiss (W-Kanal) = Spot Oben
+            };
+            int offset = 0;
+            for (int z = 0; z < 6; z++) {
+              for (int i = 0; i < zones[z] && (offset + i) < it.size(); i++) {
+                it[offset + i] = colors[z];
+              }
+              offset += zones[z];
+            }
+            for (int i = offset; i < it.size(); i++) it[i] = Color(255, 0, 255, 0);
   # --- Cabinet Glass Edge (SK6812 RGBW, GPIO46) ueber RMT-DMA ---
   # Langes Kabel -> RMT hat mehr Signalreserve als der SPI-Stream und laeuft
   # damit auch ueber die lange Leitung einwandfrei (per Treiber-Tausch bestaetigt).
