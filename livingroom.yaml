@@ -397,8 +397,15 @@ sensor:
     update_interval: 10s
 
   # --- Raum Temp/Feuchte (DHT22, ECHT) ---
+  # GPIO0 ist Strapping-/BOOT-Pin. Interner Pull-up zusaetzlich zum externen
+  # aktiviert -- stabilisiert die 1-Draht-Kommunikation des DHT22 (Sensor zieht
+  # die Leitung nur nach LOW, der Ruhepegel muss sicher HIGH sein).
   - platform: dht
-    pin: ${pin_dht}
+    pin:
+      number: ${pin_dht}
+      mode:
+        input: true
+        pullup: true
     model: DHT22
     update_interval: 30s
     temperature:
