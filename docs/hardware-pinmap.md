@@ -22,16 +22,38 @@ Pin-Quelle der Wahrheit: `config/pins.yaml`.
 | GPIO17 | Lüfter PWM | 4-Pin-Fan (LEDC 25 kHz) |
 | GPIO38 | Lüfter Tacho | 4-Pin-Fan (pulse_counter; war GPIO21, wg. Onboard-LED verlegt) |
 | GPIO21 | Onboard-RGB-LED | Waveshare WS2812 — per Firmware auf AUS gesetzt |
-| GPIO45 | LED Sideboard | SK6812 RGBW, 112 px, über 74AHCT125 (SPI-DMA, MOSI SPI3, kurzes Kabel) |
-| GPIO46 | LED Cabinet Glass Edge | SK6812 RGBW, 103 px, über 74AHCT125 (RMT-DMA, langes Kabel) |
+| GPIO45 | LED Sideboard | SK6812 RGBW, 111 px, über 74AHCT125 (SPI-DMA, MOSI SPI3, kurzes Kabel) |
+| GPIO46 | LED Cabinet Glass Edge | SK6812 RGBW, 102 px (6 Zonen), über 74AHCT125 (RMT-DMA, langes Kabel) |
 | GPIO39 | Motor Enable | IBT-2 (R_EN + L_EN gebrückt) |
 | GPIO40 | Motor RPWM | IBT-2 / BTS7960 |
 | GPIO41 | Motor LPWM | IBT-2 / BTS7960 |
 | GPIO16 | Encoder A | Quadratur-Encoder |
 | GPIO18 | Encoder B | Quadratur-Encoder |
 
-Reserviert, noch nicht verbunden: Endschalter oben/unten (`pin_endstop_top`,
-`pin_endstop_bottom`) und ein 3. Pin — Kandidaten GPIO38, GPIO44, GPIO3.
+Reserviert, noch nicht verbunden: Endschalter oben (`pin_endstop_top` = GPIO3,
+Strapping-Pin) und unten (`pin_endstop_bottom` = GPIO44). GPIO38 ist jetzt der
+Lüfter-Tacho (nicht mehr als Endschalter verfügbar). Die Endschalter-Pins sind
+nach dem Tacho-Umbau noch final zu verifizieren, sobald die Mechanik verbaut ist.
+
+## Cabinet Glass Edge — 6 Zonen (102 px, verifiziert per Zone-Check)
+
+Reihenfolge entlang des Streifens (unten → Mitte → oben):
+
+| Zone | LED-Index | Länge | Funktion |
+|---|---|---|---|
+| Kante Unten | 0–24 | 25 | Glaskante von hinten beleuchtet |
+| Spot Unten | 25–33 | 9 | 45°-Strahler auf den Fachinhalt |
+| Kante Mitte | 34–58 | 25 | Glaskante |
+| Spot Mitte | 59–67 | 9 | 45°-Strahler |
+| Kante Oben | 68–92 | 25 | Glaskante |
+| Spot Oben | 93–101 | 9 | 45°-Strahler |
+
+Zonenbasierter Effekt (nur Cabinet): **Cabinet Museum** (Spots warmweiß + Kanten
+als warmweißer Parabel-Verlauf, Reveal von unten nach oben beim Start).
+Effektlisten sind getrennt (`config/effects_sideboard.yaml` /
+`config/effects_cabinet.yaml`). Der Kamineffekt (**Fireplace** / **Fireplace
+Palette**) ist keine Lambda-Datei mehr, sondern die externe C++-Komponente
+`components/fireplace_effect/` (roher PWM-Pfad über `RawPixelOutput`).
 
 ## Kurz-Notizen (nur das Nötigste)
 
@@ -44,7 +66,8 @@ Reserviert, noch nicht verbunden: Endschalter oben/unten (`pin_endstop_top`,
   Kabel) = RMT-DMA** (`esp32_rmt_led_strip`). RMT hat über die lange Leitung mehr
   Signalreserve; SPI über lange Kabel glitcht (per Treiber-Tausch verifiziert).
   Non-DMA flimmert und ist bewusst nicht im Einsatz.
-- **Lüfter:** über HA steuerbar (`fan.wohnzimmer_controller_av_fan`), RPM als Sensor.
+- **Lüfter:** automatische Temperatur-Regelung nach AV-Receiver-Temp (kein
+  manueller Regler mehr). Tacho auf GPIO38, `AV Fan Duty` als Diagnose-Sensor.
 - **Motor-Test:** Schalter `Motor Test Mode` (Standard AUS) fährt zum Bring-up
   5 s links / 5 s rechts bei 50 % Duty. Kein Endschalter-Schutz — nur bei
   freilaufender Mechanik einschalten.

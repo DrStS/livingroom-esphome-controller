@@ -17,13 +17,15 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [x] IP-Adresse + MAC als Text-Sensor (Diagnose)
 - [x] API-Connected Binary-Sensor
 - [x] ESP-Temperatur + freier Heap + Loop-Zeit (Diagnose)
+- [~] Onboard-RGB-LED (GPIO21) per Firmware auf AUS (1-px-Strip, `ALWAYS_OFF`) —
+      Verhalten beim Trennen von 12V/5V noch zu bestätigen
 
 ## 2. Strommessung (2× INA226)
 - [x] 12V: Spannung / Strom / Leistung / Shunt
 - [x] 5V: Spannung / Strom / Leistung / Shunt
-- [ ] Energie kumuliert (kWh) pro Schiene (`total_daily_energy`)
-- [ ] Überstrom-Warnung als Binary-Sensor (Schwelle je Schiene)
-- [ ] Gesamtleistung (12V + 5V) als Template-Sensor
+- [~] Energie kumuliert (Wh) pro Schiene (`total_daily_energy`, HA-Zeitquelle) — in HA prüfen
+- [~] Überstrom-Warnung als Binary-Sensor (Schwelle je Schiene, `config/hardware.yaml`) — Schwellen an reale Last anpassen
+- [~] Gesamtleistung (12V + 5V) als Template-Sensor (`Rail Total Power`) — in HA prüfen
 
 ## 3. Temperatur / Feuchte
 - [x] DHT22 Raum: Temperatur + Feuchte
@@ -33,7 +35,7 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [ ] Übertemperatur-Warnung je Zone (Binary-Sensor)
 
 ## 4. Lüfter (4-Pin)
-- [x] RPM-Sensor (Tacho)
+- [x] RPM-Sensor (Tacho, GPIO38 — von GPIO21 verlegt wg. Onboard-LED-Konflikt)
 - [x] Automatik: lineare Kennlinie nach AV-Receiver-Temperatur (geschlossener Regelkreis)
       ≤ 26 C → 500 rpm · 26–34 C → linear 500→1400 rpm · > 34 C → Vollgas (0,5 C Hysterese)
 - [x] Anlauf-Kick + Min-Duty (Lüfter läuft sicher an)
@@ -44,22 +46,28 @@ Lebendes Dokument. Wir erweitern und testen Komponente für Komponente.
 - [ ] Stall-Erkennung (Duty > 0 aber RPM = 0 → Warn-Binary-Sensor)
 
 ## 5. LED-Strips (2× SK6812 RGBW)
-- [x] Sideboard (GPIO45, RMT-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
-- [x] Glass Edge (GPIO46, SPI-DMA): An/Aus/Helligkeit/RGBW (Bring-up statisch verifiziert)
+- Sideboard: **111 px**, GPIO45, **SPI-DMA** (kurzes Kabel). Cabinet Glass Edge:
+  **102 px** (6 Zonen), GPIO46, **RMT-DMA** (langes Kabel).
+- [x] Beide Strips angeschlossen + An/Aus/Helligkeit/RGBW verifiziert (nicht vertauscht)
 - [x] Beide Strips flackerfrei (statisches Weiss unter W5500-Last bestaetigt)
-- [x] Beide Strips angeschlossen + An/Aus verifiziert (nicht vertauscht)
 - [x] Treiberzuordnung nach Kabellaenge geloest (per Treiber-Tausch verifiziert):
-      Sideboard (GPIO45, kurzes Kabel) = SPI-DMA, Glass Edge (GPIO46, langes Kabel)
-      = RMT-DMA. Beide flackerfrei + glitchfrei, auch mit langem Kabel am Cabinet.
-- [x] LED-Wiring-Test-Button (R→G→B→W + Pixel Walk automatisch, fuer Farbreihenfolge/Anzahl/tote Pixel)
-- [x] Effekte animiert auf beiden Strips glitchfrei (Rainbow/Fireworks/etc.
-      beim Treiber-Tausch-Test bestaetigt): Fireplace, Aurora, Lift Show, Fault,
-      Rainbow, Color Wipe, Scan, Twinkle, Random Twinkle, Fireworks, Pulse, Pixel Walk
-- [~] Echter Feuer-Effekt „Fireplace" = Fire2012 (Kriegsman) mit Schwarzkoerper-
-      Farbabbildung, pro-Pixel-Waerme (effect_data), Regler „Fire Cooling" +
-      „Fire Sparking" (implementiert, visuell noch zu bewerten)
+      Sideboard (kurzes Kabel) = SPI-DMA, Glass Edge (langes Kabel) = RMT-DMA.
+- [x] Pixelzahlen per Length/Zone-Check verifiziert: Sideboard 111, Cabinet 102
+- [x] Cabinet in 6 Zonen verifiziert (Zone-Check): 3× (25 Kante + 9 Spot),
+      Reihenfolge unten → Mitte → oben
+- [x] LED-Wiring-Test-Button (R→G→B→W + Pixel Walk)
+- [x] Effektlisten getrennt: `config/effects_sideboard.yaml` (Basis) und
+      `config/effects_cabinet.yaml` (Basis + Zonen). Kamineffekt als externe
+      C++-Komponente `components/fireplace_effect/` (roher PWM-Pfad)
+- [~] Zonen-Effekt Cabinet: **Cabinet Museum** (implementiert, visuell abzunehmen)
+- [~] Kamineffekt „Fireplace" / „Fireplace Palette" (RGBW-Rohpalette über
+      RawPixelOutput, DMA-serialisiert) — visuell abzunehmen; Cabinet
+      `output_gain: 50%` als Startwert
+- [!] RISIKO: Cabinet (serialisierter RMT) kann die obersten ~30 LEDs nicht
+      ansteuern / bei paralleler Sideboard-DMA-Last aufblitzen. Bekanntes
+      DMA-Kollisionsthema, mit voller Bundle-Integration (Option C) akzeptiert.
 - [~] Szenen-Select + Intensity-Regler (implementiert, noch nicht in HA getestet)
-- [~] „Effect Speed"-Regler (Entity existiert, wird noch nicht ausgewertet)
+- [ ] Effekte animiert unter Dauerlast auf beiden Strips gleichzeitig glitchfrei
 - [ ] Beide Strips synchron schalten (Gruppen-Schalter)
 - [ ] Szenen um Speed-Kopplung erweitern
 

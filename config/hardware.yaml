@@ -3,12 +3,11 @@
 substitutions:
   led_sideboard_pixels: "111"
   led_glass_edge_pixels: "102"
-  # Cabinet Glass Edge Zone-Map (verifiziert per Zone-Check):
-  # 3x (25 Kante + 9 Spot) = 102 aktive LEDs + 1 Rest = 103 gesamt.
+  # Cabinet Glass Edge Zone-Map (physisch verifiziert per Zone-Check):
+  # 3x (25 Kante + 9 Spot) = 102 LEDs gesamt.
   # Reihenfolge: Kante Unten -> Spot Unten -> Kante Mitte -> Spot Mitte -> Kante Oben -> Spot Oben
   led_glass_zone_edge_len: "25"
   led_glass_zone_spot_len: "9"
-  led_inner_diffuser_pixels: "1"   # später final setzen
 
   lift_top_position_pulses: "940"
   lift_slow_zone_pulses: "80"
@@ -26,6 +25,10 @@ substitutions:
   ina226_5v_shunt: "0.01 ohm"
   ina226_12v_max_current: "8A" # Testbereich
   ina226_5v_max_current: "8A"
+  # Ueberstrom-Warnschwellen (A) je Schiene -> Binary-Sensor "problem".
+  # Vorlaeufig konservativ; an reale Last anpassen.
+  ina226_12v_warn_current: "6.0"
+  ina226_5v_warn_current: "6.0"
 
   ds18b20_av_address: "0x0000000000000000"
   ds18b20_cabinet_address: "0x0000000000000000"

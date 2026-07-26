@@ -2,6 +2,7 @@
 
 #ifdef USE_ESP32
 
+#include "led_dma_sync.h"
 #include "esphome/core/log.h"
 #include <esp_heap_caps.h>
 #include <cstring>
@@ -14,22 +15,29 @@ static const char *const TAG = "spi_clockless_led";
 #define BIT(n) (1u << (n))
 #endif
 
-// Bewaehrte 3-Bit-Kodierung aus Espressifs led_strip: jedes Datenbit wird als
-// 3 SPI-Bits kodiert ("0" = 100, "1" = 110), ein Farbbyte -> 3 SPI-Bytes,
-// MSB zuerst. Der Puffer muss vorher fuer diese 3 Bytes 0 sein.
+// SK6812-konforme 4-Bit-Kodierung:
+//   Datenbit 0 -> 1000
+//   Datenbit 1 -> 1100
+// Bei 3,2 MHz dauert ein SPI-Bit 0,3125 us. Daraus ergeben sich:
+//   0: T0H=0,3125 us, T0L=0,9375 us
+//   1: T1H=0,6250 us, T1L=0,6250 us
+// Ein LED-Datenbit dauert damit exakt 1,25 us (800 kbit/s).
+// Ein Farbbyte wird zu vier SPI-Bytes, MSB zuerst.
 static void spi_encode_byte(uint8_t data, uint8_t *buf) {
-  buf[2] |= data & BIT(0) ? BIT(2) | BIT(1) : BIT(2);
-  buf[2] |= data & BIT(1) ? BIT(5) | BIT(4) : BIT(5);
-  buf[2] |= data & BIT(2) ? BIT(7) : 0x00;
-  buf[1] |= BIT(0);
-  buf[1] |= data & BIT(3) ? BIT(3) | BIT(2) : BIT(3);
-  buf[1] |= data & BIT(4) ? BIT(6) | BIT(5) : BIT(6);
-  buf[0] |= data & BIT(5) ? BIT(1) | BIT(0) : BIT(1);
-  buf[0] |= data & BIT(6) ? BIT(4) | BIT(3) : BIT(4);
-  buf[0] |= data & BIT(7) ? BIT(7) | BIT(6) : BIT(7);
+  uint32_t encoded = 0;
+  for (int bit = 7; bit >= 0; --bit) {
+    encoded <<= 4;
+    encoded |= (data & (1u << bit)) != 0 ? 0xCu : 0x8u;
+  }
+  buf[0] = static_cast<uint8_t>(encoded >> 24);
+  buf[1] = static_cast<uint8_t>(encoded >> 16);
+  buf[2] = static_cast<uint8_t>(encoded >> 8);
+  buf[3] = static_cast<uint8_t>(encoded);
 }
 
+
 void SPIClocklessLedStrip::setup() {
+  init_led_dma_arbiter();
   // Farbkomponenten-Positionen aus rgb_order ableiten.
   switch (this->rgb_order_) {
     case ORDER_RGB: this->r_pos_ = 0; this->g_pos_ = 1; this->b_pos_ = 2; break;
@@ -108,19 +116,16 @@ void SPIClocklessLedStrip::write_state(light::LightState *state) {
     this->schedule_show();
     return;
   }
-  this->last_refresh_ = now;
-  this->mark_shown_();
 
   const uint8_t bpp = this->bytes_per_pixel_();
   for (int i = 0; i < this->num_leds_; i++) {
     const uint8_t *src = this->buf_ + (i * bpp);         // r,g,b(,w)
-    uint8_t *dst = this->spi_buf_ + (i * bpp * 3);        // 3 SPI-Bytes je Farbe
-    memset(dst, 0, bpp * 3);
-    spi_encode_byte(src[0], dst + 3 * this->r_pos_);      // rot
-    spi_encode_byte(src[1], dst + 3 * this->g_pos_);      // gruen
-    spi_encode_byte(src[2], dst + 3 * this->b_pos_);      // blau
+    uint8_t *dst = this->spi_buf_ + (i * bpp * 4);        // 4 SPI-Bytes je Farbe
+    spi_encode_byte(src[0], dst + 4 * this->r_pos_);      // rot
+    spi_encode_byte(src[1], dst + 4 * this->g_pos_);      // gruen
+    spi_encode_byte(src[2], dst + 4 * this->b_pos_);      // blau
     if (this->is_rgbw_)
-      spi_encode_byte(src[3], dst + 3 * this->w_pos_);    // weiss
+      spi_encode_byte(src[3], dst + 4 * this->w_pos_);    // weiss
   }
 
   spi_transaction_t trans;
@@ -128,17 +133,49 @@ void SPIClocklessLedStrip::write_state(light::LightState *state) {
   trans.length = this->get_spi_buffer_size_() * 8;  // Bits
   trans.tx_buffer = this->spi_buf_;
 
+  // Strict bidirectional serialization: the same token is taken by RMT before
+  // rmt_transmit() and released only by the RMT TX-done ISR callback.
+  if (!acquire_led_dma(pdMS_TO_TICKS(100))) {
+    ESP_LOGW(TAG, "LED DMA arbiter timeout before SPI transfer");
+    this->status_set_warning();
+    this->schedule_show();
+    return;
+  }
+
   const esp_err_t err = spi_device_transmit(this->spi_dev_, &trans);
+  release_led_dma();
+
   if (err != ESP_OK) {
     ESP_LOGW(TAG, "SPI transmit failed: %d", err);
     this->status_set_warning();
+    // Frame was not sent -> retry on the next loop and do NOT mark it shown or
+    // advance the refresh timestamp.
+    this->schedule_show();
     return;
   }
+
+  // Only now the frame has physically been transferred: mark it shown and start
+  // the refresh-rate window. This prevents ESPHome from treating a failed frame
+  // (arbiter timeout / SPI error) as displayed.
+  this->last_refresh_ = now;
+  this->mark_shown_();
   this->status_clear_warning();
 }
 
 // buf_ speichert im RGB(W)-Standardformat (r,g,b,w); die Reihenfolge auf dem
 // Draht macht write_state via r_pos_/g_pos_/b_pos_/w_pos_.
+void SPIClocklessLedStrip::set_pixel_raw(int32_t index, const Color &color) {
+  if (index < 0 || index >= this->num_leds_ || this->buf_ == nullptr)
+    return;
+  const uint8_t bpp = this->bytes_per_pixel_();
+  uint8_t *base = this->buf_ + (index * bpp);
+  base[0] = color.r;
+  base[1] = color.g;
+  base[2] = color.b;
+  if (this->is_rgbw_)
+    base[3] = color.w;
+}
+
 light::ESPColorView SPIClocklessLedStrip::get_view_internal(int32_t index) const {
   const uint8_t bpp = this->bytes_per_pixel_();
   uint8_t *base = this->buf_ + (index * bpp);

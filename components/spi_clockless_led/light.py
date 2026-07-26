@@ -1,6 +1,7 @@
 from esphome import pins
 import esphome.codegen as cg
 from esphome.components import esp32, light
+from esphome.components.fireplace_effect import RawPixelOutput
 from esphome.components.esp32 import include_builtin_idf_component
 import esphome.config_validation as cv
 from esphome.const import (
@@ -16,13 +17,14 @@ from esphome.const import (
 
 CODEOWNERS = ["@livingroom"]
 DEPENDENCIES = ["esp32"]
+AUTO_LOAD = ["fireplace_effect"]
 
 CONF_SPI_HOST = "spi_host"
 CONF_CLOCK_SPEED = "clock_speed"
 
 spi_clockless_led_ns = cg.esphome_ns.namespace("spi_clockless_led")
 SPIClocklessLedStrip = spi_clockless_led_ns.class_(
-    "SPIClocklessLedStrip", light.AddressableLight
+    "SPIClocklessLedStrip", light.AddressableLight, RawPixelOutput
 )
 
 RGBOrder = spi_clockless_led_ns.enum("RGBOrder")
@@ -42,6 +44,19 @@ SPI_HOSTS = {
     "SPI3": SPIHost.SPI_HOST_3,
 }
 
+def _reject_inverted_pin(config):
+    # Der SK6812-SPI-Waveform-Encoder unterstuetzt keinen invertierten Ausgang
+    # (Idle-Pegel + Reset-Low-Phase wuerden brechen). Frueher wurde inverted
+    # still geschluckt -> jetzt explizit ablehnen statt wirkungslos zu ignorieren.
+    if config[CONF_PIN][CONF_INVERTED]:
+        raise cv.Invalid(
+            "spi_clockless_led unterstuetzt keinen invertierten Datenpin "
+            "(inverted: true). Bitte einen nicht-invertierten Pegelwandler "
+            "verwenden."
+        )
+    return config
+
+
 CONFIG_SCHEMA = cv.All(
     esp32.only_on_variant(supported=[esp32.VARIANT_ESP32S3, esp32.VARIANT_ESP32P4]),
     light.ADDRESSABLE_LIGHT_SCHEMA.extend(
@@ -52,12 +67,13 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_RGB_ORDER, default="GRB"): cv.enum(RGB_ORDERS, upper=True),
             cv.Optional(CONF_IS_RGBW, default=False): cv.boolean,
             cv.Optional(CONF_SPI_HOST, default="SPI3"): cv.enum(SPI_HOSTS, upper=True),
-            cv.Optional(CONF_CLOCK_SPEED, default=3333333): cv.int_range(
-                min=2500000, max=4000000
+            cv.Optional(CONF_CLOCK_SPEED, default=3200000): cv.int_range(
+                min=3000000, max=3500000
             ),
             cv.Optional(CONF_MAX_REFRESH_RATE): cv.positive_time_period_microseconds,
         }
     ).extend(cv.COMPONENT_SCHEMA),
+    _reject_inverted_pin,
 )
 
 
@@ -71,8 +87,6 @@ async def to_code(config):
 
     cg.add(var.set_num_leds(config[CONF_NUM_LEDS]))
     cg.add(var.set_pin(config[CONF_PIN][CONF_NUMBER]))
-    if config[CONF_PIN][CONF_INVERTED]:
-        cg.add(var.set_inverted(True))
     cg.add(var.set_rgb_order(config[CONF_RGB_ORDER]))
     cg.add(var.set_is_rgbw(config[CONF_IS_RGBW]))
     cg.add(var.set_spi_host(config[CONF_SPI_HOST]))

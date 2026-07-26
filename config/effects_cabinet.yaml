@@ -1,0 +1,77 @@
+# CABINET GLASS EDGE (102 px, 6 Zonen).
+# Reflektiertes Kaminlicht (Raw-Pfad) + bestehender Museum-Look (normaler
+# ESPHome-Gammaweg) + Fireworks.
+#
+# Zonen (unten -> mitte -> oben): je 25 Kante + 9 Spot.
+#   0 Kante Unten 0..24  | 1 Spot Unten 25..33
+#   2 Kante Mitte 34..58 | 3 Spot Mitte 59..67
+#   4 Kante Oben  68..92 | 5 Spot Oben  93..101
+
+# CABINET: reflektiertes Kaminlicht nutzt denselben globalen Flicker, aber ein
+# ruhigeres und schwaecheres Rendering. Normalbetrieb bleibt auf ESPHome-Gamma.
+# output_gain: 50% als Startwert -- der Reflection-Pfad erzeugt intern einen
+# hoeheren, gleichmaessigeren visual_level und ist damit trotz *0.68 rechnerisch
+# fast so hell wie das direkte Sideboard. 45-55 % ist der sinnvolle Startbereich;
+# am eingebauten Moebel final justieren.
+- fireplace:
+    name: "Fireplace"
+    raw_output_id: cabinet_glass_edge_out
+    role: REFLECTION
+    update_interval: 20ms
+    intensity: 100%
+    output_gain: 50%
+    green_gain: 100%
+    white_gain: 100%
+
+# Kalibrier-Palette: zeigt die zentralen FIRE_PALETTE-Rohwerte 1:1 (der Effekt
+# umgeht bewusst das Reflection-Profil, damit beide Strips identische Rohwerte
+# zeigen). output_gain hier 100 %, es ist nur ein Abnahme-/Kalibrierbild.
+- fireplace_palette:
+    name: "Fireplace Palette"
+    raw_output_id: cabinet_glass_edge_out
+    role: REFLECTION
+    output_gain: 100%
+    green_gain: 100%
+    white_gain: 100%
+
+# MUSEUM: Spots kraeftig warmweiss, Kanten als warmweisser Parabel-Verlauf.
+# LOGISCHE Pre-Gamma-Werte (kein powf) -> ESPHome-Gamma 2.8 formt die
+# Wahrnehmung, HA-Slider skaliert. Beim Start Reveal von unten nach oben.
+- addressable_lambda:
+    name: "Cabinet Museum"
+    update_interval: 33ms
+    lambda: |-
+      static const int Z_START[6] = {0, 25, 34, 59, 68, 93};
+      static const int Z_LEN[6]   = {25, 9, 25, 9, 25, 9};
+      static float phase;
+      if (initial_run) phase = 0.0f;
+      phase += 0.02f;
+      if (phase > 4.0f) phase = 4.0f;
+      for (int shelf = 0; shelf < 3; shelf++) {
+        float lv = phase - shelf * 0.6f;
+        if (lv < 0.0f) lv = 0.0f;
+        if (lv > 1.0f) lv = 1.0f;
+        float sp = (lv - 0.25f) / 0.75f;
+        if (sp < 0.0f) sp = 0.0f;
+        if (sp > 1.0f) sp = 1.0f;
+        const int edge = shelf * 2;
+        const int spot = shelf * 2 + 1;
+        const int elen = Z_LEN[edge];
+        const float emid = (elen - 1) / 2.0f;
+        for (int i = 0; i < elen; i++) {
+          float d = fabsf((float)i - emid) / emid;
+          float g = 1.0f - d * d;
+          if (g < 0.0f) g = 0.0f;
+          const float f = lv * g;
+          it[Z_START[edge] + i] = Color((uint8_t)(120 * f), (uint8_t)(45 * f), 0, (uint8_t)(170 * f));
+        }
+        const uint8_t sr = (uint8_t)(150 * sp);
+        const uint8_t sg = (uint8_t)(70 * sp);
+        const uint8_t sw = (uint8_t)(255 * sp);
+        for (int i = 0; i < Z_LEN[spot]; i++)
+          it[Z_START[spot] + i] = Color(sr, sg, 0, sw);
+      }
+      for (int i = 102; i < (int)it.size(); i++) it[i] = Color(0, 0, 0, 0);
+
+- addressable_fireworks:
+    name: "Fireworks"

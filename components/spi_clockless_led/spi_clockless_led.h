@@ -7,6 +7,7 @@
 #include "esphome/core/color.h"
 #include "esphome/core/component.h"
 #include "esphome/core/helpers.h"
+#include "esphome/components/fireplace_effect/raw_pixel_output.h"
 
 #include <driver/spi_master.h>
 #include <esp_err.h>
@@ -27,12 +28,11 @@ enum SPIHost : uint8_t {
   SPI_HOST_3,
 };
 
-// SK6812/WS2812-Ausgabe ueber SPI-DMA. Verwendet die bewaehrte 3-Bit-Kodierung
-// von Espressifs led_strip ("0" = 100, "1" = 110), aber mit einem hoeheren
-// SPI-Takt (Default 3,33 MHz) -> "1"-High = 0,6 us, "0"-High = 0,3 us, exakt
-// SK6812-konform (led_strip selbst laeuft fix mit 2,5 MHz = 0,8 us "1", zu lang
-// fuer SK6812). SPI-DMA ist interrupt-immun gegenueber dem W5500.
-class SPIClocklessLedStrip final : public light::AddressableLight {
+// SK6812-RGBW-Ausgabe ueber SPI-DMA. Jedes LED-Datenbit wird mit vier
+// SPI-Bits kodiert (0=1000, 1=1100). Bei 3,2 MHz entstehen 800-kbit/s-Symbole
+// mit SK6812-konformen High-/Low-Zeiten. SPI-DMA ist unempfindlich gegen
+// normale Interrupt-Latenzen des W5500.
+class SPIClocklessLedStrip final : public light::AddressableLight, public fireplace_effect::RawPixelOutput {
  public:
   void setup() override;
   void write_state(light::LightState *state) override;
@@ -40,6 +40,8 @@ class SPIClocklessLedStrip final : public light::AddressableLight {
   float get_setup_priority() const override;
 
   int32_t size() const override { return this->num_leds_; }
+  int32_t raw_pixel_count() const override { return this->num_leds_; }
+  void set_pixel_raw(int32_t index, const Color &color) override;
 
   light::LightTraits get_traits() override {
     auto traits = light::LightTraits();
@@ -52,7 +54,6 @@ class SPIClocklessLedStrip final : public light::AddressableLight {
   }
 
   void set_pin(uint8_t pin) { this->pin_ = pin; }
-  void set_inverted(bool inverted) { this->inverted_ = inverted; }
   void set_num_leds(uint16_t num_leds) { this->num_leds_ = num_leds; }
   void set_is_rgbw(bool is_rgbw) { this->is_rgbw_ = is_rgbw; }
   void set_rgb_order(RGBOrder rgb_order) { this->rgb_order_ = rgb_order; }
@@ -70,8 +71,12 @@ class SPIClocklessLedStrip final : public light::AddressableLight {
 
   uint8_t bytes_per_pixel_() const { return this->is_rgbw_ ? 4 : 3; }
   size_t get_buffer_size_() const { return this->num_leds_ * this->bytes_per_pixel_(); }
-  // 3 SPI-Bytes pro Farbbyte (3 SPI-Bits pro Datenbit).
-  size_t get_spi_buffer_size_() const { return this->get_buffer_size_() * 3; }
+  // 4 SPI-Bytes pro Farbbyte (4 SPI-Bits pro Datenbit) plus mindestens
+  // 80 us Low-Pegel fuer das SK6812-Latch. 40 Byte entsprechen selbst bei
+  // 3,5 MHz noch gut 91 us.
+  static constexpr size_t RESET_BYTES_{40};
+  size_t get_spi_payload_size_() const { return this->get_buffer_size_() * 4; }
+  size_t get_spi_buffer_size_() const { return this->get_spi_payload_size_() + RESET_BYTES_; }
 
   uint8_t *buf_{nullptr};       // Pixel im RGB(W)-Standardformat (r,g,b,w)
   uint8_t *effect_data_{nullptr};
@@ -82,8 +87,7 @@ class SPIClocklessLedStrip final : public light::AddressableLight {
   uint8_t pin_{0};
   uint16_t num_leds_{0};
   bool is_rgbw_{false};
-  bool inverted_{false};
-  uint32_t clock_speed_{3333333};
+  uint32_t clock_speed_{3200000};
   RGBOrder rgb_order_{ORDER_GRB};
   SPIHost spi_host_{SPI_HOST_3};
 

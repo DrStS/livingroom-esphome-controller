@@ -1,0 +1,24 @@
+# SIDEBOARD: normales ESPHome-Gamma bleibt aktiv. Nur die zwei Fireplace-
+# Effekte schreiben bewusst ueber RawPixelOutput direkt in den PWM-Puffer.
+- fireplace:
+    name: "Fireplace"
+    raw_output_id: sideboard_ambient_out
+    role: DIRECT
+    update_interval: 20ms
+    intensity: 100%
+    output_gain: 100%
+    green_gain: 100%
+    white_gain: 100%
+
+# Zeigt die zehn zentralen Raw-PWM-Palettenstuetzstellen gleichzeitig auf dem
+# eingebauten Strip. Diese Ansicht zuerst visuell freigeben/kalibrieren.
+- fireplace_palette:
+    name: "Fireplace Palette"
+    raw_output_id: sideboard_ambient_out
+    role: DIRECT
+    output_gain: 100%
+    green_gain: 100%
+    white_gain: 100%
+
+- addressable_fireworks:
+    name: "Fireworks"

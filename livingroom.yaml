@@ -53,18 +53,18 @@ esphome:
       - output.set_level:
           id: out_fan_pwm
           level: 45%
-      # Feuer-Effekt auf beide Strips nach kurzem Delay (wartet auf Light-Init).
+      # Kurzer Delay wartet auf Light-Init.
       - delay: 2s
-      # DIAGNOSE Sideboard: Feuer + letzte LED weiss (Laengencheck).
+      # TEST-Startzustand: beide Strips gleichzeitig aktiv, um die Serialisierung
+      # zu pruefen -- Sideboard dynamisches Feuer, Cabinet Museum.
       - light.turn_on:
           id: light_sideboard_ambient
           brightness: 100%
-          effect: "Length Check"
-      # DIAGNOSE: Glass Edge Zonen-Farben (25-9-25-9-25-9 = 102).
+          effect: "Fireplace"
       - light.turn_on:
           id: light_cabinet_glass_edge
           brightness: 100%
-          effect: "Zone Check"
+          effect: "Cabinet Museum"
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -82,7 +82,7 @@ external_components:
   - source:
       type: local
       path: components
-    components: [spi_clockless_led]
+    components: [spi_clockless_led, serialized_rmt_led, fireplace_effect]
 
 logger:
   level: INFO
@@ -97,6 +97,11 @@ api:
 ota:
   - platform: esphome
     password: !secret wohnzimmer_ota_password
+
+# Zeitquelle aus Home Assistant -> Tages-Energiezaehler (Reset um Mitternacht).
+time:
+  - platform: homeassistant
+    id: ha_time
 
 ethernet:
   type: W5500
@@ -183,6 +188,9 @@ light:
   # --- Onboard-RGB-LED des Waveshare-Boards (GPIO21) -> dauerhaft AUS ---
   # GPIO21 ist die Onboard-WS2812. Wird als 1-Pixel-Strip initialisiert und
   # beim Boot mit schwarzem Frame ausgeschaltet. internal -> nicht in HA sichtbar.
+  # --- Onboard-RGB-LED des Waveshare-Boards (GPIO21) -> dauerhaft AUS ---
+  # GPIO21 ist die Onboard-WS2812. Wird als 1-Pixel-Strip initialisiert und
+  # beim Boot mit schwarzem Frame ausgeschaltet. internal -> nicht in HA sichtbar.
   - platform: esp32_rmt_led_strip
     id: onboard_led
     internal: true
@@ -199,203 +207,50 @@ light:
   # daher liegt der lange Cabinet-Strip bewusst auf RMT, siehe unten.)
   - platform: spi_clockless_led
     id: light_sideboard_ambient
-    name: "Sideboard Ambient"
+    output_id: sideboard_ambient_out   # Output-Objekt (RawPixelOutput) fuer Fireplace
+    name: "Sideboard"
     pin: ${pin_led_sideboard}
     num_leds: ${led_sideboard_pixels}
     rgb_order: GRB
     is_rgbw: true
     spi_host: SPI3
-    clock_speed: 3333333
+    # 3,2 MHz -> 4-Bit-SK6812-Kodierung ergibt exakt 1,25 us/Bit (800 kbit/s).
+    clock_speed: 3200000
+    # Gamma-Korrektur = ESPHome-Standard (2.8). Effektwerte werden als LOGISCHE
+    # Pre-Gamma-Werte geschrieben; ESPHome macht Gamma + HA-Slider-Helligkeit
+    # automatisch. Kein eigenes powf / keine Slider-Multiplikation im Lambda.
+    gamma_correct: 2.8
     restore_mode: RESTORE_DEFAULT_OFF
-    effects: &led_effects
-      # TEST: eine einzelne LED wandert durch den Strip (Pixel-fuer-Pixel-Check).
-      - addressable_lambda:
-          name: "Pixel Walk"
-          update_interval: 150ms
-          lambda: |-
-            static int idx = 0;
-            if (initial_run) idx = 0;
-            for (int i = 0; i < it.size(); i++) it[i] = Color(0, 0, 0, 0);
-            it[idx] = Color(255, 255, 255, 0);
-            idx = (idx + 1) % it.size();
-      # REALISTISCHES FEUER: HorizontalFire fuer SK6812 RGBW.
-      # Mehrskalige Noise-Ebenen + Diffusion + zustandsbehaftete Aufflacker +
-      # horizontale Drift + Blackbody-RGBW-Palette. Empfohlen: 25 ms.
-      - addressable_lambda:
-          name: "Fireplace"
-          update_interval: 25ms
-          lambda: |-
-            static constexpr int MAX_LEDS = 512;
-            static constexpr int MAX_FLARES = 6;
-            struct FireFlare { bool active; bool rising; int32_t center_q8; int16_t velocity_q8; uint8_t radius; uint8_t level; uint8_t peak; uint8_t attack; uint8_t decay; };
-            static uint8_t next_heat[MAX_LEDS];
-            static uint8_t slow_value[MAX_LEDS]; static uint8_t slow_target[MAX_LEDS];
-            static uint8_t medium_value[MAX_LEDS]; static uint8_t medium_target[MAX_LEDS];
-            static uint8_t fast_value[MAX_LEDS]; static uint8_t fast_target[MAX_LEDS];
-            static FireFlare flares[MAX_FLARES];
-            static uint32_t frame = 0;
-            static uint32_t slow_phase_q8 = 0, medium_phase_q8 = 0, fast_phase_q8 = 0;
-            const int led_count = (it.size() < MAX_LEDS) ? static_cast<int>(it.size()) : MAX_LEDS;
-            if (led_count <= 0) return;
-            const int slow_spacing = 18; const int medium_spacing = 7; const int fast_spacing = 3;
-            const int slow_count = (led_count + slow_spacing - 1) / slow_spacing + 2;
-            const int medium_count = (led_count + medium_spacing - 1) / medium_spacing + 2;
-            const int fast_count = (led_count + fast_spacing - 1) / fast_spacing + 2;
-            auto random_range = [&](int mn, int mx) -> uint8_t { if (mx <= mn) return (uint8_t)mn; return (uint8_t)(mn + random_uint32() % (uint32_t)(mx - mn + 1)); };
-            auto approach_value = [](uint8_t cur, uint8_t tgt, uint8_t sh) -> uint8_t { int d = (int)tgt - (int)cur; if (!d) return cur; int s = d >> sh; if (!s) s = (d > 0) ? 1 : -1; int r = (int)cur + s; if (r < 0) r = 0; if (r > 255) r = 255; return (uint8_t)r; };
-            auto initialize_layer = [&](uint8_t *v, uint8_t *t, int cnt, int mn, int mx) { uint8_t prev = random_range(mn, mx); for (int i = 0; i < cnt; i++) { uint8_t rv = random_range(mn, mx); prev = (uint8_t)(((uint16_t)prev * 2 + rv) / 3); v[i] = prev; t[i] = random_range(mn, mx); } };
-            auto update_layer = [&](uint8_t *v, uint8_t *t, int cnt, uint32_t cadence, uint32_t stagger, uint8_t sh, int mn, int mx) { for (int i = 0; i < cnt; i++) { if (((frame + (uint32_t)i * stagger) % cadence) == 0) t[i] = random_range(mn, mx); v[i] = approach_value(v[i], t[i], sh); } };
-            auto sample_layer = [](const uint8_t *v, int cnt, int sp, uint32_t ph, int px) -> uint8_t { uint32_t period = (uint32_t)cnt * sp * 256UL; uint32_t pos = (uint32_t)px * 256UL + ph; pos %= period; uint32_t np = pos / (uint32_t)sp; int ia = (int)(np >> 8); int ib = (ia + 1 < cnt) ? ia + 1 : 0; uint32_t frac = np & 0xFFUL; uint32_t sf = (frac * frac * (765UL - 2UL * frac)) / 65025UL; uint32_t inv = 255UL - sf; return (uint8_t)(((uint32_t)v[ia] * inv + (uint32_t)v[ib] * sf + 127UL) / 255UL); };
-            if (initial_run) {
-              frame = 0; slow_phase_q8 = 0; medium_phase_q8 = 0; fast_phase_q8 = 0;
-              initialize_layer(slow_value, slow_target, slow_count, 55, 220);
-              initialize_layer(medium_value, medium_target, medium_count, 35, 240);
-              initialize_layer(fast_value, fast_target, fast_count, 20, 235);
-              for (int i = 0; i < MAX_FLARES; i++) { flares[i].active = false; flares[i].level = 0; }
-              int h = 65, tg = 75;
-              for (int i = 0; i < led_count; i++) { if ((i % 8) == 0) tg = 55 + random_uint32() % 55; h = (h * 3 + tg) / 4; it[i].set_effect_data((uint8_t)h); }
-            }
-            update_layer(slow_value, slow_target, slow_count, 53, 17, 5, 55, 220);
-            update_layer(medium_value, medium_target, medium_count, 17, 7, 3, 35, 240);
-            update_layer(fast_value, fast_target, fast_count, 5, 3, 2, 20, 235);
-            uint32_t slow_per = (uint32_t)slow_count * slow_spacing * 256UL;
-            uint32_t med_per = (uint32_t)medium_count * medium_spacing * 256UL;
-            uint32_t fast_per = (uint32_t)fast_count * fast_spacing * 256UL;
-            slow_phase_q8 = (slow_phase_q8 + 2UL) % slow_per;
-            medium_phase_q8 = (medium_phase_q8 + med_per - 7UL) % med_per;
-            fast_phase_q8 = (fast_phase_q8 + 17UL) % fast_per;
-            if ((random_uint32() % 68UL) == 0) {
-              for (int i = 0; i < MAX_FLARES; i++) { if (flares[i].active) continue;
-                FireFlare &f = flares[i]; bool hot = (random_uint32() % 100UL) < 16UL;
-                f.active = true; f.rising = true;
-                f.center_q8 = (int32_t)(random_uint32() % (uint32_t)led_count) * 256;
-                f.velocity_q8 = (int16_t)((int)(random_uint32() % 13UL) - 6);
-                if (hot) { f.radius = 1 + random_uint32() % 3; f.level = 8; f.peak = 175 + random_uint32() % 66; f.attack = 28 + random_uint32() % 24; f.decay = 8 + random_uint32() % 9; }
-                else { f.radius = 4 + random_uint32() % 8; f.level = 5; f.peak = 75 + random_uint32() % 86; f.attack = 8 + random_uint32() % 11; f.decay = 2 + random_uint32() % 4; }
-                break; }
-            }
-            for (int i = 0; i < MAX_FLARES; i++) { FireFlare &f = flares[i]; if (!f.active) continue;
-              if (f.rising) { int nl = (int)f.level + (int)f.attack; if (nl >= f.peak) { f.level = f.peak; f.rising = false; } else f.level = (uint8_t)nl; }
-              else { if (f.level <= f.decay) { f.active = false; f.level = 0; continue; } f.level -= f.decay; }
-              f.center_q8 += f.velocity_q8;
-              int32_t mx_c = (int32_t)(led_count - 1) * 256;
-              if (f.center_q8 < 0) { f.center_q8 = -f.center_q8; f.velocity_q8 = -f.velocity_q8; }
-              if (f.center_q8 > mx_c) { f.center_q8 = mx_c - (f.center_q8 - mx_c); f.velocity_q8 = -f.velocity_q8; }
-            }
-            for (int i = 0; i < led_count; i++) {
-              int il1 = (i > 0) ? i - 1 : 0; int il2 = (i > 1) ? i - 2 : il1;
-              int ir1 = (i + 1 < led_count) ? i + 1 : led_count - 1; int ir2 = (i + 2 < led_count) ? i + 2 : ir1;
-              int heat = ((int)it[i].get_effect_data() * 6 + (int)it[il1].get_effect_data() * 2 + (int)it[ir1].get_effect_data() * 2 + (int)it[il2].get_effect_data() + (int)it[ir2].get_effect_data()) / 12;
-              int sn = sample_layer(slow_value, slow_count, slow_spacing, slow_phase_q8, i);
-              int mn = sample_layer(medium_value, medium_count, medium_spacing, medium_phase_q8, i);
-              int fn = sample_layer(fast_value, fast_count, fast_spacing, fast_phase_q8, i);
-              int tgt = 42 + sn * 38 / 255 + mn * 48 / 255;
-              if (mn > 150) tgt += (mn - 150) * 30 / 105;
-              int fa = 9 + ((tgt > 70) ? (tgt - 70) / 4 : 0); if (fa > 25) fa = 25;
-              tgt += (fn - 128) * fa / 128;
-              int fb = 0;
-              for (int fi = 0; fi < MAX_FLARES; fi++) { const FireFlare &fl = flares[fi]; if (!fl.active) continue;
-                int cp = (int)((fl.center_q8 + 128) >> 8); int dist = i - cp; if (dist < 0) dist = -dist;
-                if (dist > fl.radius) continue; int rp1 = (int)fl.radius + 1; int rem = rp1 - dist;
-                fb += (int)fl.level * rem * rem / (rp1 * rp1); }
-              heat += (tgt - heat) / 6;
-              heat += fb / 3;
-              heat -= 1; if (heat < 30) heat = 30; if (heat > 255) heat = 255;
-              next_heat[i] = (uint8_t)heat;
-            }
-            for (int i = 0; i < led_count; i++) {
-              uint8_t h = next_heat[i]; it[i].set_effect_data(h);
-              uint8_t r = 0, g = 0, b = 0, w = 0;
-              if (h < 48) { r = 5 + (int)h * 45 / 48; }
-              else if (h < 96) { int x = h - 48; r = 50 + x * 130 / 48; g = x * 12 / 48; }
-              else if (h < 144) { int x = h - 96; r = 180 + x * 75 / 48; g = 12 + x * 78 / 48; }
-              else if (h < 192) { int x = h - 144; r = 255; g = 90 + x * 115 / 48; }
-              else if (h < 232) { int x = h - 192; r = 255; g = 205 + x * 50 / 40; w = x * 25 / 40; }
-              else { int x = h - 232; r = 255; g = 255; w = 25 + x * 95 / 23; }
-              it[i] = Color(r, g, b, w);
-            }
-            for (int i = led_count; i < (int)it.size(); i++) it[i] = Color(0, 0, 0, 0);
-            frame++;
-      - addressable_rainbow:
-          name: "Aurora"
-          speed: 8
-          width: 50
-      - addressable_scan:
-          name: "Lift Show"
-          move_interval: 80ms
-      - strobe:
-          name: "Fault"
-          colors:
-            - state: true
-              red: 100%
-              green: 0%
-              blue: 0%
-              white: 0%
-              brightness: 100%
-              duration: 400ms
-            - state: false
-              duration: 400ms
-      - addressable_rainbow:
-          name: "Rainbow"
-      - addressable_color_wipe:
-          name: "Color Wipe"
-      - addressable_scan:
-          name: "Scan"
-      - addressable_twinkle:
-          name: "Twinkle"
-      - addressable_random_twinkle:
-          name: "Random Twinkle"
-      - addressable_fireworks:
-          name: "Fireworks"
-      - pulse:
-          name: "Pulse"
-      # DIAGNOSE: Laengen-Check (alles rot, letzte 4 LEDs weiss).
-      - addressable_lambda:
-          name: "Length Check"
-          update_interval: 500ms
-          lambda: |-
-            for (int i = 0; i < it.size() - 4; i++) it[i] = Color(255, 0, 0, 0);
-            for (int i = it.size() - 4; i < it.size(); i++) it[i] = Color(255, 255, 255, 255);
-      # DIAGNOSE: Zonen-Check fuer Cabinet Glass Edge (25-9-25-9-25-9 = 102 + 1 Rest).
-      - addressable_lambda:
-          name: "Zone Check"
-          update_interval: 500ms
-          lambda: |-
-            const int zones[] = {25, 9, 25, 9, 25, 9};
-            const Color colors[] = {
-              Color(255, 0, 0, 0),     // Rot = Kante Unten
-              Color(0, 255, 0, 0),     // Gruen = Spot Unten
-              Color(0, 0, 255, 0),     // Blau = Kante Mitte
-              Color(255, 255, 0, 0),   // Gelb = Spot Mitte
-              Color(0, 255, 255, 0),   // Cyan = Kante Oben
-              Color(0, 0, 0, 255),     // Weiss (W-Kanal) = Spot Oben
-            };
-            int offset = 0;
-            for (int z = 0; z < 6; z++) {
-              for (int i = 0; i < zones[z] && (offset + i) < it.size(); i++) {
-                it[offset + i] = colors[z];
-              }
-              offset += zones[z];
-            }
-            for (int i = offset; i < it.size(); i++) it[i] = Color(255, 255, 255, 255);
+    # Effektliste ausgelagert: Basis-Effekte ohne Zonen-Effekte.
+    effects: !include config/effects_sideboard.yaml
   # --- Cabinet Glass Edge (SK6812 RGBW, GPIO46) ueber RMT-DMA ---
   # Langes Kabel -> RMT hat mehr Signalreserve als der SPI-Stream und laeuft
   # damit auch ueber die lange Leitung einwandfrei (per Treiber-Tausch bestaetigt).
   # Nutzt den einzigen DMA-faehigen RMT-Kanal des S3.
-  - platform: esp32_rmt_led_strip
+  - platform: serialized_rmt_led
     id: light_cabinet_glass_edge
-    name: "Cabinet Glass Edge"
+    output_id: cabinet_glass_edge_out   # Output-Objekt (RawPixelOutput) fuer Fireplace
+    name: "Cabinet"
     pin: ${pin_led_glass_edge}
     num_leds: ${led_glass_edge_pixels}
     chipset: SK6812
     rgb_order: GRB
     is_rgbw: true
+    # DMA + grosser Puffer (1024): der komplette Frame wird per DMA ausgegeben,
+    # ohne ISR-Nachfuellen -> kein Abriss der letzten ~30 LEDs (Non-DMA mit
+    # kleinem Puffer lief am Ende leer). Die frueher gefuerchtete GDMA-Kollision
+    # mit dem Sideboard-SPI entfaellt, weil beide Strips per Token serialisiert
+    # sind (nie gleichzeitiges Senden). 1024 = bewaehrter Init-Wert (4096 war zu
+    # gross und liess rmt_new_tx_channel scheitern).
     use_dma: true
     rmt_symbols: 1024
     use_psram: false
     max_refresh_rate: 20ms
+    # Gamma-Korrektur = ESPHome-Standard (2.8), siehe Sideboard.
+    gamma_correct: 2.8
     restore_mode: RESTORE_DEFAULT_OFF
-    effects: *led_effects
+    # Effektliste ausgelagert: Basis-Effekte + zonenbasierte Cabinet-Effekte.
+    effects: !include config/effects_cabinet.yaml
 
 # =============================================================================
 # LUEFTER (ECHT) -- AUTOMATISCHE Temperatur-Regelung (kein manueller Regler).
@@ -495,6 +350,40 @@ sensor:
       id: rail_5v_shunt_voltage
       entity_category: diagnostic
 
+  # --- Energie kumuliert pro Schiene (integriert die Leistung ueber die Zeit) ---
+  - platform: total_daily_energy
+    name: "Rail 12V Energy Daily"
+    id: rail_12v_energy_daily
+    power_id: rail_12v_power
+    unit_of_measurement: "Wh"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: energy
+  - platform: total_daily_energy
+    name: "Rail 5V Energy Daily"
+    id: rail_5v_energy_daily
+    power_id: rail_5v_power
+    unit_of_measurement: "Wh"
+    accuracy_decimals: 1
+    state_class: total_increasing
+    device_class: energy
+
+  # --- Gesamtleistung (12V + 5V) ---
+  - platform: template
+    name: "Rail Total Power"
+    id: rail_total_power
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 2
+    update_interval: 2s
+    lambda: |-
+      float a = id(rail_12v_power).state;
+      float b = id(rail_5v_power).state;
+      if (isnan(a)) a = 0.0f;
+      if (isnan(b)) b = 0.0f;
+      return a + b;
+
   # --- Temperaturen (DS18B20, ECHT, je eigener 1-Wire-Bus) ---
   - platform: dallas_temp
     one_wire_id: onewire_av
@@ -586,6 +475,25 @@ sensor:
     lambda: 'return id(mock_lift_position);'
 
 binary_sensor:
+  # --- Ueberstrom-Warnung je Schiene (Schwellen in config/hardware.yaml) ---
+  - platform: template
+    name: "Rail 12V Overcurrent"
+    id: rail_12v_overcurrent
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      const float c = id(rail_12v_current).state;
+      if (isnan(c)) return false;
+      return c > ${ina226_12v_warn_current}f;
+  - platform: template
+    name: "Rail 5V Overcurrent"
+    id: rail_5v_overcurrent
+    device_class: problem
+    entity_category: diagnostic
+    lambda: |-
+      const float c = id(rail_5v_current).state;
+      if (isnan(c)) return false;
+      return c > ${ina226_5v_warn_current}f;
   - platform: template
     name: "TV Lift Homed"
     id: tv_lift_homed
@@ -659,7 +567,7 @@ select:
     name: "Livingroom Light Scene"
     id: livingroom_light_scene
     optimistic: true
-    options: [Manual, Cinema, Fireplace, Aurora, Sunset, Glass Trace, Lift Show, Maintenance, Fault]
+    options: [Manual, Museum, Fireplace, Fireplace Palette, Fireworks]
     initial_option: Manual
     on_value:
       - script.execute: apply_light_scene
@@ -675,16 +583,10 @@ number:
     initial_value: 60
     on_value:
       - script.execute: apply_light_scene
-  - platform: template
-    name: "Livingroom Effect Speed"
-    id: livingroom_effect_speed
-    optimistic: true
-    min_value: 0
-    max_value: 100
-    step: 1
-    initial_value: 35
-    on_value:
-      - script.execute: apply_light_scene
+  # Hinweis: Ein frueherer "Livingroom Effect Speed"-Regler wurde entfernt. Der
+  # Fireplace-Flicker laeuft in einem physikalisch motivierten festen Frequenz-
+  # band (~9-13 Hz) im C++-Effekt und wurde nie an einen Speed-Wert gebunden;
+  # ein 0-100-Regler waere daher funktionslos/irrefuehrend gewesen.
 
 
 # =============================================================================
@@ -785,21 +687,27 @@ script:
       - light.turn_on:
           id: light_sideboard_ambient
           brightness: 100%
-          effect: "Pixel Walk"
+          effect: "None"
       - light.turn_on:
           id: light_cabinet_glass_edge
           brightness: 100%
-          effect: "Pixel Walk"
+          effect: "None"
 
   - id: apply_light_scene
     then:
       - lambda: |-
           auto set_light = [](light::LightState *l, float r, float g, float b,
                               float w, float bri, const char *eff) {
+            // Intensitaet 0 bedeutet wirklich AUS (keine 2 %-Resthelligkeit,
+            // sonst leuchten Effekte mit Grundanteil weiter schwach).
+            if (bri <= 0.0f) {
+              l->turn_off().perform();
+              return;
+            }
             auto call = l->turn_on();
             call.set_rgb(r, g, b);
             call.set_white(w);
-            call.set_brightness(bri < 0.02f ? 0.02f : bri);
+            call.set_brightness(bri);
             call.set_effect(eff);
             call.perform();
           };
@@ -810,37 +718,27 @@ script:
               call.perform();
             }
           };
-          const std::string s = id(livingroom_light_scene).state;
+          const auto s = id(livingroom_light_scene).current_option();
           const float bri = id(livingroom_effect_intensity).state / 100.0f;
           if (s == "Manual") {
             clear_eff(id(light_sideboard_ambient));
             clear_eff(id(light_cabinet_glass_edge));
-          } else if (s == "Cinema") {
-            const float b2 = bri * 0.5f;
-            set_light(id(light_sideboard_ambient), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.35f, 0.0f, 0.25f, b2, "None");
+          } else if (s == "Museum") {
+            // Cabinet: Vitrinen-Look (Effekt steuert Farben pro Pixel); Sideboard aus.
+            // Helligkeit folgt jetzt dem Intensity-Regler (bri) statt fix 100 %.
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Cabinet Museum");
+            id(light_sideboard_ambient)->turn_off().perform();
           } else if (s == "Fireplace") {
-            set_light(id(light_sideboard_ambient), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.25f, 0.0f, 0.08f, bri, "Fireplace");
-          } else if (s == "Aurora") {
-            set_light(id(light_sideboard_ambient), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
-            set_light(id(light_cabinet_glass_edge), 0.0f, 0.6f, 1.0f, 0.0f, bri, "Aurora");
-          } else if (s == "Sunset") {
-            const float b2 = bri * 0.8f;
-            set_light(id(light_sideboard_ambient), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.2f, 0.0f, 0.05f, b2, "None");
-          } else if (s == "Glass Trace") {
-            set_light(id(light_cabinet_glass_edge), 0.0f, 0.4f, 1.0f, 0.0f, bri, "Lift Show");
-            set_light(id(light_sideboard_ambient), 0.0f, 0.2f, 0.5f, 0.0f, bri * 0.3f, "None");
-          } else if (s == "Lift Show") {
-            set_light(id(light_sideboard_ambient), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
-            set_light(id(light_cabinet_glass_edge), 0.5f, 0.0f, 1.0f, 0.0f, bri, "Lift Show");
-          } else if (s == "Maintenance") {
-            set_light(id(light_sideboard_ambient), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
-            set_light(id(light_cabinet_glass_edge), 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, "None");
-          } else if (s == "Fault") {
-            set_light(id(light_sideboard_ambient), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, "Fault");
+            // Beide Strips mit dem Raw-Kaminfeuer; HA-Slider (bri) steuert die
+            // Helligkeit ueber current_values im Effekt selbst.
+            set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
+          } else if (s == "Fireplace Palette") {
+            set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace Palette");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace Palette");
+          } else if (s == "Fireworks") {
+            set_light(id(light_sideboard_ambient), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
           }
 
 # =============================================================================
@@ -908,15 +806,24 @@ interval:
           condition:
             switch.is_on: motor_test_mode
           then:
+            # Definierte Totzeit gegen BTS7960-Shoot-Through: erst BEIDE
+            # Halbbruecken auf 0 und Enable weg, kurz warten (Gate-Ladungen
+            # abbauen), dann neue Richtung setzen und erst danach Enable an.
+            - output.set_level:
+                id: out_motor_rpwm
+                level: 0%
+            - output.set_level:
+                id: out_motor_lpwm
+                level: 0%
+            - output.turn_off: out_motor_enable
+            - delay: 50ms
             - lambda: |-
                 static bool right = false;
                 right = !right;
-                id(out_motor_enable).turn_on();
                 if (right) {
-                  id(out_motor_lpwm).set_level(0.0f);
                   id(out_motor_rpwm).set_level(0.5f);
                 } else {
-                  id(out_motor_rpwm).set_level(0.0f);
                   id(out_motor_lpwm).set_level(0.5f);
                 }
+            - output.turn_on: out_motor_enable
 

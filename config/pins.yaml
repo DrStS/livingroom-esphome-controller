@@ -23,8 +23,8 @@ substitutions:
 
   # LED-Datenleitungen (2 Strips): ESP32 -> 74AHCT125 -> 330 Ohm -> Strip DATA
   # ACHTUNG: GPIO45/46 sind Strapping-Pins -> falls Boot zickt, umlegen.
-  pin_led_sideboard: GPIO45   # Sideboard, 112 px
-  pin_led_glass_edge: GPIO46  # Cabinet Glass Edge, 103 px
+  pin_led_sideboard: GPIO45   # Sideboard, 111 px
+  pin_led_glass_edge: GPIO46  # Cabinet Glass Edge, 102 px
 
   # Motorcontroller IBT-2 (BTS7960): 2x PWM + 1x Enable (R_EN+L_EN gebrueckt)
   # Auf GPIO39-41 (JTAG-Pins MTCK/MTDO/MTDI, als I/O nutzbar; externes JTAG entfaellt)
@@ -36,9 +36,9 @@ substitutions:
   # Encoder (Quadratur A/B)
   pin_encoder_a: GPIO16
   pin_encoder_b: GPIO18
-  # Endschalter (USB bleibt erhalten -> GPIO19/20 NICHT verwenden)
-  pin_endstop_top: GPIO3      # Strapping, als Eingang ok (Endschalter offen beim Boot)
-  pin_endstop_bottom: GPIO44  # UART0 RX, als Eingang ok (keine UART-Bridge auf dem Board)
+  # Endschalter: bewusst NICHT im Code. Die Endlagen-Abschaltung wird auf der
+  # Power-Seite hardwareseitig geloest (manuell verdrahtet). GPIO19/20 bleiben
+  # frei fuer natives USB.
 
   # Onboard-RGB-LED des Waveshare-Boards (WS2812). MUSS separat AUS geschaltet
   # werden, sonst leuchtet sie (uninitialisiert) hell weiss. Kollidierte frueher

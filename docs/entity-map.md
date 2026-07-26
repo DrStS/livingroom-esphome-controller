@@ -22,11 +22,10 @@ carry the `wohnzimmer_controller_` prefix.
 | `binary_sensor.wohnzimmer_controller_tv_lift_fault` | Binary Sensor | LiftController fault state |
 | `button.wohnzimmer_controller_tv_lift_reference` | Button | Homing/reference run |
 | `button.wohnzimmer_controller_tv_lift_clear_fault` | Button | Clears fault |
-| `light.wohnzimmer_controller_sideboard_ambient` | RGBW Light | SK6812 RGBW, 112 px, GPIO45 |
-| `light.wohnzimmer_controller_cabinet_glass_edge` | RGBW Light | SK6812 RGBW, 103 px, GPIO46 |
+| `light.wohnzimmer_controller_sideboard` | RGBW Light | SK6812 RGBW, 111 px, GPIO45 |
+| `light.wohnzimmer_controller_cabinet` | RGBW Light | SK6812 RGBW, 102 px, GPIO46 |
 | `select.wohnzimmer_controller_livingroom_light_scene` | Select | ESP LED mode |
 | `number.wohnzimmer_controller_livingroom_effect_intensity` | Number | ESP LED scene intensity |
-| `number.wohnzimmer_controller_livingroom_effect_speed` | Number | ESP LED scene speed |
 | `sensor.wohnzimmer_controller_rail_12v_voltage` | Sensor | INA226 12 V rail |
 | `sensor.wohnzimmer_controller_rail_12v_current` | Sensor | INA226 12 V rail |
 | `sensor.wohnzimmer_controller_rail_12v_power` | Sensor | INA226 12 V rail |

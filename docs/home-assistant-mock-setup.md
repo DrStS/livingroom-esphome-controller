@@ -17,12 +17,10 @@ daher tragen alle Controller-Entities das Präfix `wohnzimmer_controller_`.
 - `button.wohnzimmer_controller_tv_lift_clear_fault`
 
 ### Licht
-- `light.wohnzimmer_controller_sideboard_ambient`
-- `light.wohnzimmer_controller_cabinet_glass_edge`
-- `light.wohnzimmer_controller_cabinet_inner_diffuser`
+- `light.wohnzimmer_controller_sideboard`
+- `light.wohnzimmer_controller_cabinet`
 - `select.wohnzimmer_controller_livingroom_light_scene`
 - `number.wohnzimmer_controller_livingroom_effect_intensity`
-- `number.wohnzimmer_controller_livingroom_effect_speed`
 
 ### Rail Monitoring
 - `sensor.wohnzimmer_controller_rail_12v_voltage`
