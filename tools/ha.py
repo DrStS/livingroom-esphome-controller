@@ -963,8 +963,19 @@ def cmd_restart(cfg: Settings, args: argparse.Namespace) -> None:
 
 
 def cmd_logs(cfg: Settings, args: argparse.Namespace) -> None:
-    text = api(cfg, "error_log")
-    lines = str(text).splitlines()
+    # Ueber SSH aus der Logdatei lesen. Der frueher genutzte REST-Endpunkt
+    # /api/error_log gibt es ab Home Assistant 2026.x nicht mehr (404).
+    result = ssh_run(cfg, f"tail -n 2000 {cfg.config_dir}/home-assistant.log 2>/dev/null || true",
+                     check=False)
+    text = result.stdout
+    if not text.strip():
+        # Ohne Logdatei bleibt das Journal des Core-Containers.
+        result = ssh_run(cfg, "ha core logs 2>/dev/null | tail -n 2000 || true", check=False)
+        text = result.stdout
+    if not text.strip():
+        die("Kein Protokoll gefunden.",
+            f"Weder {cfg.config_dir}/home-assistant.log noch 'ha core logs' liefern etwas.")
+    lines = text.splitlines()
     selected = lines[-args.lines:]
     if args.filter:
         pattern = re.compile(args.filter, re.IGNORECASE)
@@ -1054,10 +1065,12 @@ def cmd_verify(cfg: Settings, args: argparse.Namespace) -> None:
     dashboards = [ROOT / e["source"] for e in manifest.get("files", [])
                   if e["target"].startswith("dashboards/")]
     states = get_states(cfg)
+    all_referenced: set[str] = set()
 
     problems = 0
     for path in dashboards:
         referenced = sorted(collect_dashboard_entities(path))
+        all_referenced.update(referenced)
         missing = [e for e in referenced if e not in states]
         # Zustandslose Domains ausnehmen: ein Button hat bis zur ersten
         # Ausloesung keinen Wert, das ist kein Fehler.
@@ -1079,6 +1092,19 @@ def cmd_verify(cfg: Settings, args: argparse.Namespace) -> None:
         if not missing and not empty:
             print(f"  {OK} alle Referenzen vorhanden und mit Wert")
         print()
+
+    # Gegenrichtung: Entitaeten, die das Geraet liefert, die aber in keinem
+    # Dashboard vorkommen. Kein Fehler -- aber der einzige Weg zu bemerken,
+    # dass eine neu hinzugefuegte Entitaet noch nirgends sichtbar ist.
+    own = sorted(e for e in states if DEVICE_PREFIX in e)
+    unused = [e for e in own if e not in all_referenced]
+    print(f"Abdeckung: {len(own) - len(unused)} von {len(own)} Controller-Entitaeten "
+          f"sind im Dashboard sichtbar")
+    if unused:
+        print(f"{WARN} nicht im Dashboard verwendet:")
+        for entity in unused:
+            print(f"       {entity}")
+    print()
 
     if problems:
         print("Fehlende Entitaeten haben genau zwei Ursachen:\n"

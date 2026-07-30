@@ -1,247 +1,336 @@
 # =============================================================================
-# LIVING ROOM DASHBOARD
+# WOHNZIMMER -- Dashboard
 # -----------------------------------------------------------------------------
-# Alle Entitaets-IDs sind gegen das laufende Geraet geprueft (ESPHome-API).
+# Quelle der Wahrheit. Ausgerollt mit:
+#     python tools/ha.py deploy
+# Nicht auf dem Host bearbeiten, der naechste Deploy ueberschreibt es.
 #
-# Aufbau in drei Ansichten, damit die Uebersicht kompakt bleibt:
-#   Uebersicht -> Bedienung und aktuelle Werte, keine Graphen
-#   Verlauf    -> alle Liniengraphen
-#   Diagnose   -> Service, Referenzieren, Systemwerte
+# AUFBAU: drei Ansichten mit klarer Aufgabenteilung, damit nichts doppelt
+# erscheint.
+#   Uebersicht  Bedienen und aktuelle Werte. Keine Graphen, keine Diagnose.
+#   Verlauf     Ausschliesslich Zeitverlaeufe.
+#   Diagnose    Service, Regler, Messtechnik, System.
 #
-# Entfernt gegenueber der alten Version:
-#   - input_select.livingroom_mode und script.livingroom_set_mode
-#     (das HA-Package war defekt und ist geloescht; die Szenen-Auswahl am ESP
-#      erfuellt dieselbe Aufgabe und funktioniert auch ohne Home Assistant)
-#   - tv_lift_homed, tv_lift_fault, tv_lift_reference, tv_lift_clear_fault
-#     (existieren in der aktuellen Firmware nicht mehr)
+# Alle 41 Entitaeten des Controllers sind genau einmal untergebracht. Geprueft
+# mit:
+#     python tools/ha.py verify                  (Referenzen -> Registry)
+#     python tools/verify_dashboard_entities.py  (Referenzen -> Geraet)
 #
-# Lift-Bedienung: Pfeile fahren manuell, der Positions-Slider faehrt ein Ziel an
-# (nur nach Referenzierung). Referenziert wird ueber den Schalter in Diagnose.
+# ZWEI ENTSCHEIDUNGEN, DIE ERKLAERUNG BRAUCHEN:
+#
+# 1. Keine Gauge-Karte fuer die Liftposition. Solange der Lift nicht
+#    referenziert ist, hat der Prozentwert keinen Zahlenwert, und eine Gauge
+#    quittiert das mit "Entitaet ist nicht-numerisch". Tile-Karten zeigen
+#    "Unbekannt" sauber an.
+#
+# 2. Der Zustand des Covers ("geoeffnet"/"geschlossen") wird nirgends gezeigt.
+#    Die Cover-Domain von Home Assistant kennt nur diese beiden Begriffe, was
+#    bei einem Lift in Zwischenlage irrefuehrend ist. Stattdessen der Textwert
+#    "TV Lift Lage": Unten, Oben, Zwischenlage mit Prozent, Faehrt hoch,
+#    Faehrt runter, Nicht referenziert.
 # =============================================================================
-title: Living Room
+title: Wohnzimmer
 views:
   # ===========================================================================
-  - title: Uebersicht
+  # ÜBERSICHT
+  # ===========================================================================
+  - title: Übersicht
     path: overview
     icon: mdi:sofa
-    cards:
-      - type: tile
-        entity: cover.wohnzimmer_controller_tv_lift
-        name: TV Lift
-        features:
-          - type: cover-open-close
-          - type: cover-position
-
-      # "Lage" statt des Cover-Zustands: die Cover-Domain in Home Assistant
-      # kennt nur geoeffnet/geschlossen. Hier steht Unten, Oben, Zwischenlage
-      # mit Prozentwert oder die aktuelle Fahrtrichtung.
-      - type: entities
-        title: TV Lift
-        show_header_toggle: false
-        entities:
-          - entity: sensor.wohnzimmer_controller_tv_lift_lage
+    type: sections
+    max_columns: 3
+    sections:
+      # -- TV Lift -----------------------------------------------------------
+      # Die Pfeile fahren manuell und funktionieren auch ohne Referenz. Der
+      # Positionsschieber faehrt ein Ziel an und braucht dafuer die Referenz.
+      - type: grid
+        cards:
+          - type: heading
+            heading: TV Lift
+            heading_style: title
+            icon: mdi:television-classic
+          - type: tile
+            entity: cover.wohnzimmer_controller_tv_lift
+            name: TV Lift
+            icon: mdi:television-classic
+            features:
+              - type: cover-open-close
+              - type: cover-position
+          - type: tile
+            entity: sensor.wohnzimmer_controller_tv_lift_lage
             name: Lage
-          - entity: sensor.wohnzimmer_controller_tv_lift_position_percent
-            name: Position
-          - entity: sensor.wohnzimmer_controller_tv_lift_position_mm
-            name: Position (mm)
+            icon: mdi:arrow-up-down
+          - type: tile
+            entity: sensor.wohnzimmer_controller_tv_lift_position_mm
+            name: Hub
+            icon: mdi:ruler
 
-      # Bewusst KEINE Gauge-Karte: solange der Lift nicht referenziert ist, ist
-      # der Prozentwert unbekannt, und eine Gauge quittiert das mit
-      # "Entitaet ist nicht-numerisch". Tiles zeigen "Unbekannt" sauber an.
-      - type: tile
-        entity: sensor.wohnzimmer_controller_tv_lift_lage
-        name: Lift Lage
-      - type: tile
-        entity: sensor.wohnzimmer_controller_tv_lift_position_percent
-        name: Lift Position
-
-      # Szenen: Kaminfeuer flackert bewusst. Cinema laesst das Sideboard
-      # ruhig (statisches Parabelprofil), weil es direkt unter dem Bildschirm
-      # sitzt; das Cabinet bleibt dabei auf dem Museum-Look.
-      - type: entities
-        title: Licht
-        entities:
-          - entity: light.wohnzimmer_controller_sideboard
-          - entity: light.wohnzimmer_controller_cabinet
-          - type: divider
-          - entity: select.wohnzimmer_controller_livingroom_light_scene
+      # -- Licht -------------------------------------------------------------
+      # Kaminfeuer flackert absichtlich. Cinema laesst das Sideboard ruhig
+      # (statisches Parabelprofil), weil es direkt unter dem Bildschirm steht;
+      # das Cabinet bleibt dabei auf dem Museum-Look.
+      - type: grid
+        cards:
+          - type: heading
+            heading: Licht
+            heading_style: title
+            icon: mdi:lightbulb-group
+          - type: tile
+            entity: light.wohnzimmer_controller_sideboard
+            name: Sideboard
+            features:
+              - type: light-brightness
+          - type: tile
+            entity: light.wohnzimmer_controller_cabinet
+            name: Vitrine
+            features:
+              - type: light-brightness
+          - type: tile
+            entity: select.wohnzimmer_controller_livingroom_light_scene
             name: Szene
-          - entity: number.wohnzimmer_controller_livingroom_effect_intensity
-            name: Intensitaet
+            icon: mdi:palette
+            features:
+              - type: select-options
+          - type: tile
+            entity: number.wohnzimmer_controller_livingroom_effect_intensity
+            name: Intensität
+            icon: mdi:brightness-percent
+            features:
+              - type: numeric-input
+                style: slider
 
-      - type: entities
-        title: Raum und Leistung
-        show_header_toggle: false
-        entities:
-          - entity: sensor.wohnzimmer_controller_livingroom_temperature
-            name: Raum Temperatur
-          - entity: sensor.wohnzimmer_controller_livingroom_humidity
+      # -- Raumklima ---------------------------------------------------------
+      - type: grid
+        cards:
+          - type: heading
+            heading: Raumklima
+            heading_style: title
+            icon: mdi:thermometer
+          - type: tile
+            entity: sensor.wohnzimmer_controller_livingroom_temperature
+            name: Raum
+          - type: tile
+            entity: sensor.wohnzimmer_controller_livingroom_humidity
             name: Luftfeuchte
-          - entity: sensor.wohnzimmer_controller_av_receiver_temperature
-            name: AV Receiver
-          - entity: sensor.wohnzimmer_controller_cabinet_temperature
-            name: Cabinet
-          - entity: sensor.wohnzimmer_controller_av_fan_rpm
-            name: Luefter Drehzahl
-          - type: divider
-          - entity: sensor.wohnzimmer_controller_rail_total_power
-            name: Leistung gesamt
-          - entity: sensor.wohnzimmer_controller_rail_12v_energy_daily
-            name: 12V Energie heute
-          - entity: sensor.wohnzimmer_controller_rail_5v_energy_daily
-            name: 5V Energie heute
+          - type: tile
+            entity: sensor.wohnzimmer_controller_av_receiver_temperature
+            name: AV-Receiver
+          - type: tile
+            entity: sensor.wohnzimmer_controller_cabinet_temperature
+            name: Vitrine
+          - type: tile
+            entity: sensor.wohnzimmer_controller_av_fan_rpm
+            name: Lüfter
+            icon: mdi:fan
+
+      # -- Leistung ----------------------------------------------------------
+      # Nur die Summe und der Tagesverbrauch. Die Einzelwerte je Schiene
+      # stehen in der Diagnose, damit hier nichts doppelt erscheint.
+      - type: grid
+        cards:
+          - type: heading
+            heading: Leistung
+            heading_style: title
+            icon: mdi:flash
+          - type: tile
+            entity: sensor.wohnzimmer_controller_rail_total_power
+            name: Gesamt
+          - type: tile
+            entity: sensor.wohnzimmer_controller_rail_12v_energy_daily
+            name: 12 V heute
+          - type: tile
+            entity: sensor.wohnzimmer_controller_rail_5v_energy_daily
+            name: 5 V heute
 
   # ===========================================================================
+  # VERLAUF
+  # ===========================================================================
+  # Wenige Graphen mit mehreren Kurven statt vieler Einzelkarten: so sind
+  # Zusammenhaenge ablesbar, etwa Lüfterdrehzahl gegen Receivertemperatur.
   - title: Verlauf
     path: verlauf
     icon: mdi:chart-line
     cards:
-      - type: grid
-        title: TV Lift
-        columns: 2
-        square: false
-        cards:
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_tv_lift_position_percent
-            name: Position
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_tv_lift_position_mm
-            name: Hub (mm)
-            graph: line
-            hours_to_show: 6
-
       - type: history-graph
-        title: TV Lift Position 24 h
-        hours_to_show: 24
+        title: TV Lift Position
+        hours_to_show: 48
         entities:
           - entity: sensor.wohnzimmer_controller_tv_lift_position_percent
             name: Position in Prozent
 
-      - type: grid
-        title: Klima und Luefter
-        columns: 2
-        square: false
-        cards:
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_av_receiver_temperature
-            name: AV Receiver
-            graph: line
-            hours_to_show: 12
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_cabinet_temperature
-            name: Cabinet
-            graph: line
-            hours_to_show: 12
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_livingroom_temperature
-            name: Raum Temperatur
-            graph: line
-            hours_to_show: 12
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_livingroom_humidity
+      - type: history-graph
+        title: Temperaturen
+        hours_to_show: 24
+        entities:
+          - entity: sensor.wohnzimmer_controller_livingroom_temperature
+            name: Raum
+          - entity: sensor.wohnzimmer_controller_av_receiver_temperature
+            name: AV-Receiver
+          - entity: sensor.wohnzimmer_controller_cabinet_temperature
+            name: Vitrine
+          - entity: sensor.wohnzimmer_controller_esp_temperature
+            name: Controller
+
+      - type: history-graph
+        title: Luftfeuchte
+        hours_to_show: 24
+        entities:
+          - entity: sensor.wohnzimmer_controller_livingroom_humidity
             name: Luftfeuchte
-            graph: line
-            hours_to_show: 12
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_av_fan_rpm
-            name: Luefter Drehzahl
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_av_fan_duty
-            name: Luefter Duty
-            graph: line
-            hours_to_show: 6
 
-      - type: grid
-        title: Leistung und Strom
-        columns: 2
-        square: false
-        cards:
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_rail_12v_power
-            name: 12V Leistung
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_rail_12v_current
-            name: 12V Strom
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_rail_12v_voltage
-            name: 12V Spannung
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_rail_5v_power
-            name: 5V Leistung
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_rail_5v_current
-            name: 5V Strom
-            graph: line
-            hours_to_show: 6
-          - type: sensor
-            entity: sensor.wohnzimmer_controller_rail_5v_voltage
-            name: 5V Spannung
-            graph: line
-            hours_to_show: 6
+      # Beide Kurven zusammen: die Regelung faehrt den Lüfter nach der
+      # Receivertemperatur, hier ist zu sehen, ob das greift.
+      - type: history-graph
+        title: Lüfterregelung
+        hours_to_show: 12
+        entities:
+          - entity: sensor.wohnzimmer_controller_av_fan_rpm
+            name: Drehzahl
+          - entity: sensor.wohnzimmer_controller_av_fan_duty
+            name: Stellwert
 
+      - type: history-graph
+        title: Leistung
+        hours_to_show: 24
+        entities:
+          - entity: sensor.wohnzimmer_controller_rail_total_power
+            name: Gesamt
+          - entity: sensor.wohnzimmer_controller_rail_12v_power
+            name: 12 V
+          - entity: sensor.wohnzimmer_controller_rail_5v_power
+            name: 5 V
+
+      - type: statistics-graph
+        title: Energie je Tag
+        chart_type: bar
+        period: day
+        days_to_show: 30
+        stat_types:
+          - state
+        entities:
+          - entity: sensor.wohnzimmer_controller_rail_12v_energy_daily
+            name: 12 V
+          - entity: sensor.wohnzimmer_controller_rail_5v_energy_daily
+            name: 5 V
+
+  # ===========================================================================
+  # DIAGNOSE
   # ===========================================================================
   - title: Diagnose
     path: diagnose
     icon: mdi:stethoscope
-    cards:
+    type: sections
+    max_columns: 3
+    sections:
+      # -- Lift-Service ------------------------------------------------------
       # Referenzieren: Schalter EIN, wenn der Lift auf der unteren Endlage
-      # steht. AUS verwirft die Referenz (z. B. nach Handverstellung ohne Strom).
-      - type: entities
-        title: Lift Service
-        show_header_toggle: false
-        entities:
-          - entity: switch.wohnzimmer_controller_lift_referenz
-            name: Referenz (Ein = untere Endlage erreicht)
-          - entity: sensor.wohnzimmer_controller_lift_zustand
+      # steht -- das setzt die Position auf 0. AUS verwirft die Referenz, etwa
+      # nach Handverstellung im spannungslosen Zustand.
+      #
+      # Position und Referenz liegen im NVS des ESP32 und ueberstehen
+      # Stromausfall und OTA. Geschrieben wird nur bei Fahrtbeginn, Fahrtende
+      # und Referenzereignissen, um Flash-Zyklen zu schonen.
+      - type: grid
+        cards:
+          - type: heading
+            heading: Lift-Service
+            heading_style: title
+            icon: mdi:cog
+          - type: tile
+            entity: switch.wohnzimmer_controller_lift_referenz
+            name: Referenz (Ein = untere Endlage)
+            icon: mdi:target
+          - type: tile
+            entity: sensor.wohnzimmer_controller_lift_zustand
             name: Reglerzustand
-          - type: divider
-          - entity: sensor.wohnzimmer_controller_lift_geschwindigkeit
+          - type: tile
+            entity: sensor.wohnzimmer_controller_lift_geschwindigkeit
             name: Geschwindigkeit
-          - entity: number.wohnzimmer_controller_lift_max_geschwindigkeit
-            name: Max Geschwindigkeit
-          - entity: sensor.wohnzimmer_controller_tv_lift_position_pulses
-            name: Position in Pulsen
-          - entity: sensor.wohnzimmer_controller_motor_encoder_position
-            name: Encoder absolut
+          - type: tile
+            entity: number.wohnzimmer_controller_lift_max_geschwindigkeit
+            name: Max. Geschwindigkeit
+            features:
+              - type: numeric-input
+                style: box
+          - type: entities
+            show_header_toggle: false
+            entities:
+              - entity: sensor.wohnzimmer_controller_tv_lift_position_pulses
+                name: Position in Pulsen
+              - entity: sensor.wohnzimmer_controller_motor_encoder_position
+                name: Encoder absolut
+              - entity: sensor.wohnzimmer_controller_tv_lift_position_percent
+                name: Position in Prozent
 
-      - type: entities
-        title: System
-        show_header_toggle: false
-        entities:
-          - entity: binary_sensor.wohnzimmer_controller_api_connected
+      # -- Stromschienen -----------------------------------------------------
+      # 144 Counts/mm, Hub 94500 Counts = 656,25 mm. Der Motor haengt an der
+      # 12-V-Schiene: dort ist eine Fahrt als Stromspitze sichtbar.
+      - type: grid
+        cards:
+          - type: heading
+            heading: Stromschienen
+            heading_style: title
+            icon: mdi:current-dc
+          - type: entities
+            title: 12 V
+            show_header_toggle: false
+            entities:
+              - entity: sensor.wohnzimmer_controller_rail_12v_voltage
+                name: Spannung
+              - entity: sensor.wohnzimmer_controller_rail_12v_current
+                name: Strom
+              - entity: sensor.wohnzimmer_controller_rail_12v_power
+                name: Leistung
+              - entity: sensor.wohnzimmer_controller_rail_12v_shunt_voltage
+                name: Shuntspannung
+              - entity: binary_sensor.wohnzimmer_controller_rail_12v_overcurrent
+                name: Überstrom
+          - type: entities
+            title: 5 V
+            show_header_toggle: false
+            entities:
+              - entity: sensor.wohnzimmer_controller_rail_5v_voltage
+                name: Spannung
+              - entity: sensor.wohnzimmer_controller_rail_5v_current
+                name: Strom
+              - entity: sensor.wohnzimmer_controller_rail_5v_power
+                name: Leistung
+              - entity: sensor.wohnzimmer_controller_rail_5v_shunt_voltage
+                name: Shuntspannung
+              - entity: binary_sensor.wohnzimmer_controller_rail_5v_overcurrent
+                name: Überstrom
+
+      # -- Controller --------------------------------------------------------
+      # Loop-Zeit betrifft nur den ESPHome-Mainloop. Die Lift-Regelung laeuft
+      # auf einem eigenen 1-ms-Task auf Kern 1 und ist davon unabhaengig.
+      - type: grid
+        cards:
+          - type: heading
+            heading: Controller
+            heading_style: title
+            icon: mdi:chip
+          - type: tile
+            entity: binary_sensor.wohnzimmer_controller_api_connected
             name: API verbunden
-          - entity: binary_sensor.wohnzimmer_controller_rail_12v_overcurrent
-            name: 12V Ueberstrom
-          - entity: binary_sensor.wohnzimmer_controller_rail_5v_overcurrent
-            name: 5V Ueberstrom
-          - type: divider
-          - entity: sensor.wohnzimmer_controller_uptime
-            name: Laufzeit
-          - entity: sensor.wohnzimmer_controller_esp_temperature
-            name: ESP Temperatur
-          - entity: sensor.wohnzimmer_controller_heap_free
-            name: Freier Heap
-          - entity: sensor.wohnzimmer_controller_loop_time
-            name: Loop-Zeit
-          - entity: sensor.wohnzimmer_controller_av_fan_duty
-            name: Luefter Duty
-          - type: divider
-          - entity: sensor.wohnzimmer_controller_ip_address
-            name: IP-Adresse
-          - entity: sensor.wohnzimmer_controller_mac_address
-            name: MAC-Adresse
-          - entity: button.wohnzimmer_controller_controller_restart
+          - type: entities
+            show_header_toggle: false
+            entities:
+              - entity: sensor.wohnzimmer_controller_uptime
+                name: Laufzeit
+              - entity: sensor.wohnzimmer_controller_esp_temperature
+                name: Temperatur
+              - entity: sensor.wohnzimmer_controller_heap_free
+                name: Freier Heap
+              - entity: sensor.wohnzimmer_controller_loop_time
+                name: Loop-Zeit
+              - entity: sensor.wohnzimmer_controller_av_fan_duty
+                name: Lüfter-Stellwert
+              - type: divider
+              - entity: sensor.wohnzimmer_controller_ip_address
+                name: IP-Adresse
+              - entity: sensor.wohnzimmer_controller_mac_address
+                name: MAC-Adresse
+          - type: tile
+            entity: button.wohnzimmer_controller_controller_restart
             name: Controller neu starten
+            icon: mdi:restart
