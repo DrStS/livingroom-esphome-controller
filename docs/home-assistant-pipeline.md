@@ -79,6 +79,15 @@ Spiel sind.
    Der Wert wird **nur einmal** angezeigt (mit QR-Code). Sofort kopieren --
    danach ist er nicht mehr abrufbar und es muesste ein neues erzeugt werden.
 
+   **Warum der Umweg ueber die Anmeldung:** Tokens gelten immer fuer den gerade
+   angemeldeten Benutzer. Beim Anlegen eines Benutzers gibt es deshalb nur Name
+   und Passwort und keine Möglichkeit, ein Token zu vergeben -- ein Administrator
+   kann auch keines fuer jemand anderen erzeugen.
+
+   Wer sich den getrennten Benutzer sparen will, kann das Token unter dem eigenen
+   Konto erzeugen. Es funktioniert identisch; man verliert nur die saubere
+   Trennung im Protokoll und muss beim Widerrufen genauer hinschauen.
+
 7. **SSH-Add-on installieren.** Einstellungen → Add-ons → Add-on Store →
    *Advanced SSH & Web Terminal* (aus der Community-Sammlung; das offizielle
    "Terminal & SSH" geht auch). Noch nicht starten.
@@ -95,7 +104,16 @@ Spiel sind.
    - Port `22` freigeben
    - Add-on starten und *Beim Start starten* aktivieren
 
-9. **`secrets.yaml` fuellen.** Vorlage ist `secrets.example.yaml`:
+9. **Token hinterlegen:**
+
+   ```
+   python tools/ha.py token
+   ```
+
+   Fragt verdeckt nach dem Token, prueft die Form, testet es gegen das laufende
+   System und schreibt es erst dann nach `secrets.yaml`. Bei einem ungueltigen
+   Token wird nichts gespeichert -- sonst faellt der Fehler erst beim naechsten
+   Kommando auf. Von Hand geht es auch:
 
    ```yaml
    ha_host: "192.168.1.10"

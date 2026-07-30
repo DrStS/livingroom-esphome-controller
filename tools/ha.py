@@ -15,6 +15,7 @@ Aufruf immer aus dem Projektwurzelverzeichnis:
 
     python tools/ha.py check                 Zugang pruefen (erster Schritt)
     python tools/ha.py wait                  auf ein frisch gebootetes HA warten
+    python tools/ha.py token                 Zugriffs-Token pruefen und speichern
     python tools/ha.py keygen                SSH-Schluessel fuer den Zugang anlegen
     python tools/ha.py deploy                Dashboards ausrollen
     python tools/ha.py deploy --core         zusaetzlich configuration.yaml
@@ -407,6 +408,69 @@ def vars_of(cfg: Settings) -> dict[str, Any]:
         "ha_ssh_key": cfg.ssh_key,
         "ha_config_dir": cfg.config_dir,
     }
+
+
+# =============================================================================
+# Kommando: token -- Zugriffs-Token pruefen und in secrets.yaml ablegen
+# =============================================================================
+def write_secret(key: str, value: str) -> None:
+    """Setzt einen Schluessel in secrets.yaml, ohne Kommentare zu verlieren.
+
+    Bewusst textbasiert statt ueber yaml.dump: die Datei enthaelt erklaerende
+    Kommentare, die ein Neuschreiben aus der geparsten Struktur zerstoeren
+    wuerde.
+    """
+    text = SECRETS.read_text(encoding="utf-8-sig")
+    line = f'{key}: "{value}"'
+    pattern = re.compile(rf"^{re.escape(key)}\s*:.*$", re.MULTILINE)
+    if pattern.search(text):
+        text = pattern.sub(line, text, count=1)
+    else:
+        if not text.endswith("\n"):
+            text += "\n"
+        text += line + "\n"
+    SECRETS.write_text(text, encoding="utf-8")
+
+
+def cmd_token(cfg: Settings, args: argparse.Namespace) -> None:
+    if args.value:
+        token = args.value.strip()
+        print(f"{WARN} Ueber --value uebergebene Tokens landen in der Shell-History.")
+        print("        Ohne --value fragt das Kommando verdeckt nach.\n")
+    else:
+        import getpass
+        print("Token einfuegen (die Eingabe bleibt unsichtbar) und Enter druecken.")
+        print("Es ist der lange eyJ...-String aus Profil -> Sicherheit ->")
+        print("Langlebige Zugriffs-Tokens, NICHT das Passwort.\n")
+        token = getpass.getpass("ha_token: ").strip()
+
+    if not token:
+        die("Keine Eingabe.")
+    if not looks_like_token(token):
+        die("Das sieht nicht wie ein Zugriffs-Token aus.",
+            "Erwartet wird ein JWT: rund 180 Zeichen, beginnt mit 'eyJ', zwei Punkte\n"
+            "als Trenner. Ein Benutzerpasswort ist es nicht. Erzeugen unter:\n"
+            "Benutzername (unten links) -> Sicherheit -> Langlebige Zugriffs-Tokens.")
+    print(f"{OK} Form stimmt ({len(token)} Zeichen)")
+
+    # Vor dem Speichern gegen das laufende System pruefen. Ein ungueltiges Token
+    # in secrets.yaml wuerde erst beim naechsten Kommando auffallen.
+    probe = Settings({**vars_of(cfg), "ha_token": token})
+    config = api_soft(probe, "config", timeout=10)
+    if config is None:
+        die(f"Home Assistant unter {cfg.base_url} akzeptiert das Token nicht.",
+            "Moegliche Gruende: Token gehoert zu einem anderen System, wurde\n"
+            "widerrufen, oder beim Kopieren fehlen Zeichen. Nichts gespeichert.")
+    print(f"{OK} Home Assistant akzeptiert das Token: HA {config.get('version')} "
+          f"({config.get('location_name')})")
+
+    states = api_soft(probe, "states", timeout=20) or []
+    own = [i for i in states if DEVICE_PREFIX in i["entity_id"]]
+    print(f"{OK} {len(states)} Entitaeten sichtbar, davon {len(own)} vom Controller")
+
+    write_secret("ha_token", token)
+    print(f"\n{OK} in secrets.yaml gespeichert (nicht im Git)")
+    print("\nWeiter mit: python tools/ha.py check")
 
 
 # =============================================================================
@@ -845,6 +909,9 @@ def main() -> None:
     wait.add_argument("--minutes", type=int, default=15,
                       help="maximale Wartezeit (Vorgabe 15)")
 
+    token = sub.add_parser("token", help="Zugriffs-Token pruefen und in secrets.yaml ablegen")
+    token.add_argument("--value", help="Token direkt uebergeben (landet in der Shell-History)")
+
     keygen = sub.add_parser("keygen", help="SSH-Schluessel fuer den Zugang anlegen")
     keygen.add_argument("--force", action="store_true", help="bestehenden Schluessel ersetzen")
 
@@ -882,6 +949,7 @@ def main() -> None:
     handlers = {
         "check": cmd_check,
         "wait": cmd_wait,
+        "token": cmd_token,
         "keygen": cmd_keygen,
         "deploy": cmd_deploy,
         "validate": cmd_validate,
