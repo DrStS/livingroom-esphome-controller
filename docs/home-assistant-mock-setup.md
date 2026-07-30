@@ -87,22 +87,28 @@ Spannungsausfall gehalten, die Einzelzustaende der Lichter per `restore_mode`.
 
 ## Dashboards
 
-Im Repo unter `home-assistant/`. Es gibt kein Package mehr, das kopiert werden
-muesste: das frueher hier beschriebene Modi-Package ist geloescht, der
-packages-Mechanismus wird nicht mehr gebraucht.
+Nichts wird mehr von Hand kopiert. Die vollstaendige Home-Assistant-Konfiguration
+liegt unter `home-assistant/config/` und wird per Pipeline ausgerollt:
 
-- `dashboards/livingroom.yaml` → nach `/config/dashboards/` kopieren. Drei
-  Ansichten: Uebersicht (Bedienung und aktuelle Werte), Verlauf (Graphen),
-  Diagnose (Referenzieren, Reglerzustand, Systemwerte).
-- `lovelace-livingroom-dashboard.yaml` → kompakte Einzelansicht als Alternative,
-  wenn du keine drei Ansichten willst.
-- `configuration-snippet.yaml` → daraus nur den `lovelace:`-Block in
-  `/config/configuration.yaml` uebernehmen, der das YAML-Dashboard registriert.
-  Die `homeassistant: packages:`-Zeile in der Datei ist ein Ueberrest des
-  geloeschten Packages und wird nicht mehr gebraucht (offen: die Zeile ist noch
-  nicht aus dem Snippet entfernt).
+```
+python tools/ha.py deploy     # Dashboard aendern -> ausrollen
+python tools/ha.py deploy --core   # zusaetzlich configuration.yaml
+```
 
-Nach dem Kopieren: Entwicklerwerkzeuge → YAML neu laden bzw. einmal neu starten.
+`config/dashboards/livingroom.yaml` hat drei Ansichten: Uebersicht (Bedienung
+und aktuelle Werte), Verlauf (Graphen), Diagnose (Referenzieren, Reglerzustand,
+Systemwerte).
+
+Ein Package gibt es nicht mehr: das frueher hier beschriebene Modi-Package ist
+geloescht, der packages-Mechanismus wird nicht mehr gebraucht. Die Pipeline
+entfernt eine noch vorhandene `packages/livingroom_modes.yaml` auf dem Host,
+nachdem sie sie gesichert hat.
+
+Nach dem Ausrollen liest Home Assistant YAML-Dashboards beim Neuladen der Seite
+selbst neu ein. Bei Aenderungen an `configuration.yaml`:
+`python tools/ha.py restart`.
+
+Anleitung inklusive Neuinstallation: `docs/home-assistant-pipeline.md`.
 
 ## Entity-IDs pruefen
 

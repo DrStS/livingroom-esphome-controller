@@ -1,0 +1,61 @@
+# =============================================================================
+# DEPLOY-MANIFEST -- welche Datei landet wo auf dem Home-Assistant-Host
+# -----------------------------------------------------------------------------
+# Gelesen von tools/ha.py. Quellpfade sind relativ zum Projektwurzelverzeichnis,
+# Zielpfade relativ zum Konfigurationsverzeichnis von Home Assistant (/config).
+#
+# core: true  bedeutet "haengt Dateien an, die Home Assistant selbst oder die
+#             Oberflaeche schreibt". Diese Eintraege werden nur mit
+#             "deploy --core" angefasst, damit ein normaler Dashboard-Deploy
+#             nicht versehentlich in der Oberflaeche angelegte
+#             Automatisierungen loescht.
+#
+# Vor jedem Ueberschreiben legt die Pipeline auf dem Host eine Sicherung unter
+# /config/.deploy-backup/<zeitstempel>/ an.
+# =============================================================================
+
+# Zielverzeichnisse, die vor dem Kopieren existieren muessen.
+directories:
+  - dashboards
+  - themes
+  - esphome
+
+files:
+  # --- Dashboards: der Alltagsfall, jederzeit gefahrlos deploybar ---
+  - source: home-assistant/config/dashboards/livingroom.yaml
+    target: dashboards/livingroom.yaml
+
+  # --- Kern: ueberschreibt Dateien, die auch die Oberflaeche schreibt ---
+  - source: home-assistant/config/configuration.yaml
+    target: configuration.yaml
+    core: true
+  - source: home-assistant/config/automations.yaml
+    target: automations.yaml
+    core: true
+  - source: home-assistant/config/scripts.yaml
+    target: scripts.yaml
+    core: true
+  - source: home-assistant/config/scenes.yaml
+    target: scenes.yaml
+    core: true
+
+# ESPHome-Konfiguration fuer das ESPHome-Add-on. Wird nur mit
+# "deploy --esphome" kopiert, weil geflasht ohnehin vom Arbeitsplatz aus wird
+# und die Dateien auf dem Host nur zum Nachschauen und fuer Add-on-Builds sind.
+esphome:
+  target: esphome
+  files:
+    - livingroom.yaml
+    - secrets.yaml
+  directories:
+    - config
+    - components
+
+# Dateien, die auf dem Host geloescht werden sollen, weil sie aus einem
+# frueheren Setup stammen und dort Schaden anrichten.
+obsolete:
+  # Das Raum-Modus-Package setzte Szenen, die es nicht mehr gibt, und triggerte
+  # auf einen entfernten Fault-Sensor.
+  - packages/livingroom_modes.yaml
+  # Uebrig aus der Zeit, als das Dashboard von Hand kopiert wurde.
+  - ui-lovelace.yaml

@@ -41,48 +41,27 @@ Why:
 There is no mock firmware anymore. `livingroom.yaml` is the only firmware and it
 drives real hardware.
 
-## Files to copy
+## Deploying the configuration
 
-ESPHome configuration:
+Do not copy files by hand. The whole Home Assistant configuration is versioned
+under `home-assistant/config/` and rolled out over SSH:
 
-```text
-/config/esphome/livingroom.yaml
-/config/esphome/config/pins.yaml
-/config/esphome/config/hardware.yaml
-/config/esphome/config/effects_sideboard.yaml
-/config/esphome/config/effects_cabinet.yaml
-/config/esphome/components/...
-/config/esphome/secrets.yaml
+```bash
+python tools/ha.py check                # verify access first
+python tools/ha.py setup --esphome      # deploy everything, validate, restart
 ```
 
-Dashboard:
+That writes `configuration.yaml`, `automations.yaml`, `scripts.yaml`,
+`scenes.yaml` and `dashboards/livingroom.yaml`, mirrors the ESPHome
+configuration to `/config/esphome/`, has Home Assistant validate the result,
+restarts it, and verifies that every dashboard entity exists.
 
-```text
-/config/dashboards/livingroom.yaml
-```
+Full walkthrough, including installing the SSH add-on and creating the
+automation user and token: `docs/home-assistant-pipeline.md`.
 
-`home-assistant/dashboards/livingroom.yaml` has three views: Uebersicht, Verlauf,
-Diagnose. If you prefer a single compact view, use
-`home-assistant/lovelace-livingroom-dashboard.yaml` instead.
-
-To register the YAML dashboard, take the `lovelace:` block from:
-
-```text
-home-assistant/configuration-snippet.yaml
-```
-
-and add it to:
-
-```text
-/config/configuration.yaml
-```
-
-Nothing else needs to be copied. There is no Home Assistant package anymore: the
-old room-mode package (helper plus scripts) was deleted, and the scene select on
-the ESP covers the same job without depending on Home Assistant. Ignore the
-leftover `homeassistant: packages:` line in the snippet.
-
-Then restart Home Assistant.
+There is no Home Assistant package anymore: the old room-mode package (helper
+plus scripts) was deleted, and the scene select on the ESP covers the same job
+without depending on Home Assistant.
 
 ## Verify entity IDs
 

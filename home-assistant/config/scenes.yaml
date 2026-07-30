@@ -1,0 +1,4 @@
+# Home-Assistant-Szenen. Leer, weil die Wohnzimmerszenen auf dem ESP32 liegen
+# (select.<geraet>_livingroom_light_scene) und dort auch ohne Home Assistant
+# funktionieren. Wird nur von "deploy --core" ueberschrieben (mit Sicherung).
+[]

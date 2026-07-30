@@ -1,0 +1,64 @@
+# =============================================================================
+# HOME ASSISTANT HAUPTKONFIGURATION
+# -----------------------------------------------------------------------------
+# Diese Datei ist die Quelle der Wahrheit und wird von der Pipeline nach
+# /config/configuration.yaml deployt:
+#
+#     python tools/ha.py deploy --core
+#
+# Nicht direkt auf dem Home-Assistant-Host bearbeiten -- der naechste Deploy
+# ueberschreibt jede Aenderung dort (die Pipeline legt vorher eine Sicherung an).
+#
+# BEWUSST NICHT HIER GESETZT: Name, Zeitzone, Einheiten und Standort. Die legt
+# das Onboarding in .storage/core.config ab und laesst sie in der Oberflaeche
+# aendern. Wuerden sie hier stehen, waeren die Felder in der Oberflaeche
+# gesperrt.
+#
+# ENTFERNT gegenueber dem alten Setup:
+#   - "homeassistant: packages:" samt livingroom_modes.yaml. Die Raumszenen
+#     laufen auf dem ESP32 (select.<geraet>_livingroom_light_scene) und
+#     funktionieren dort auch ohne Home Assistant.
+#   - Die SMA- und BLE-Versuche. Beides lief nicht und ist nicht uebernommen.
+# =============================================================================
+
+# Standardintegrationen (unter anderem recorder, history, logbook, mobile_app).
+default_config:
+
+frontend:
+  themes: !include_dir_merge_named themes
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+# -----------------------------------------------------------------------------
+# Dashboards
+# -----------------------------------------------------------------------------
+# WICHTIG: hier steht absichtlich KEIN "mode: yaml" auf der Ebene von lovelace.
+# Das wuerde die Standardansicht ("Uebersicht") auf YAML umstellen und Home
+# Assistant wuerde /config/ui-lovelace.yaml verlangen. Das "mode: yaml" weiter
+# unten gilt nur fuer das zusaetzliche Dashboard: die Uebersicht bleibt in der
+# Oberflaeche bearbeitbar, das Wohnzimmer-Dashboard kommt aus diesem Repository.
+lovelace:
+  dashboards:
+    livingroom-dashboard:
+      mode: yaml
+      title: Wohnzimmer
+      icon: mdi:sofa
+      show_in_sidebar: true
+      filename: dashboards/livingroom.yaml
+
+# -----------------------------------------------------------------------------
+# Datenaufzeichnung
+# -----------------------------------------------------------------------------
+# Die Verlaufsansicht des Dashboards braucht Aufzeichnungen. 30 Tage sind ein
+# guter Kompromiss fuer die SD-Karte beziehungsweise SSD des Raspberry Pi.
+recorder:
+  purge_keep_days: 30
+
+logger:
+  default: info
+  logs:
+    # Beim Einrichten hilfreich: zeigt Verbindungsaufbau und Entitaetsabgleich
+    # des Controllers. Nach dem Einrichten auf "warning" setzen.
+    homeassistant.components.esphome: info

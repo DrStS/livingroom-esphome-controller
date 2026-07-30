@@ -44,10 +44,14 @@ compile_commands.json
 # Wegwerf-Ausgaben von Build-, OTA- und Diagnoselaeufen
 # (entstehen z. B. durch "esphome compile ... > _build_x.txt")
 _*.txt
+_*.log
 run*.txt
 *_stdout.txt
 *Err.txt
 *err.txt
+
+# Zwischenverzeichnis des Home-Assistant-Deploys (gefilterte secrets.yaml)
+.ha-deploy-tmp/
 
 # Editors / OS
 .vscode/*

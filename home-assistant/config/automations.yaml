@@ -1,0 +1,11 @@
+# Automatisierungen. Von der Oberflaeche verwaltet (Einstellungen ->
+# Automatisierungen), deshalb bewusst leer im Repository.
+#
+# ACHTUNG: Der normale Deploy laesst diese Datei in Ruhe, damit in der
+# Oberflaeche angelegte Automatisierungen nicht verloren gehen. Nur
+# "deploy --core" ueberschreibt sie -- und legt vorher eine Sicherung an.
+#
+# Absichtlich hier NICHT abgebildet: Lift-Sicherheit und Lichteffekte. Beides
+# laeuft lokal auf dem ESP32 und darf nicht davon abhaengen, dass Home
+# Assistant erreichbar ist.
+[]

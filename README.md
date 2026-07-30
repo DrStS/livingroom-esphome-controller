@@ -42,24 +42,50 @@ components/
 tools/
   Diagnostic scripts that talk to the running device over the ESPHome API:
   check_entity_states.py, check_lift_status.py, dump_entity_ids.py,
-  check_light_effects.py, watch_lift_logs.py, encoder_diagnose.py.
+  check_light_effects.py, watch_lift_logs.py, encoder_diagnose.py,
+  verify_dashboard_entities.py, test_persistence.py.
   See tools/README.md. encoder_diagnose.py moves the lift.
+
+tools/ha.py
+  Home Assistant pipeline: deploy the whole HA setup over SSH, validate,
+  reload, restart, and verify entities over the REST API. Replaces copying
+  YAML by hand. See docs/home-assistant-pipeline.md.
 
 bringup/
   Archived encoder/motor bring-up firmwares, kept for traceability only.
   These are complete firmwares that replace the production one and drive the
   motor outputs without encoder supervision. Read bringup/README.md before use.
 
-home-assistant/dashboards/livingroom.yaml
-  Lovelace dashboard with three views: Uebersicht, Verlauf, Diagnose.
+home-assistant/config/
+  The Home Assistant configuration, source of truth: configuration.yaml,
+  automations/scripts/scenes, and dashboards/livingroom.yaml (three views:
+  Uebersicht, Verlauf, Diagnose). Deployed by tools/ha.py, never edited on
+  the host. See home-assistant/README.md.
 
-home-assistant/lovelace-livingroom-dashboard.yaml
-  Compact single-view alternative.
+home-assistant/deploy-manifest.yaml
+  Declares which file goes where on the host.
 
 docs/
-  Setup and design documentation. Start with docs/entity-map.md and
-  docs/hardware-pinmap.md.
+  Setup and design documentation. Start with docs/home-assistant-pipeline.md
+  for the HA side, docs/entity-map.md and docs/hardware-pinmap.md for the
+  device side.
 ```
+
+## Deploying Home Assistant
+
+The HA setup is versioned here and rolled out with one command instead of
+pasting YAML into the UI:
+
+```text
+python tools/ha.py check      verify access (network, SSH, API token)
+python tools/ha.py setup      full first-time rollout
+python tools/ha.py deploy     push dashboards (everyday case)
+python tools/ha.py verify     check dashboards against the HA registry
+```
+
+Access data lives in `secrets.yaml` (`ha_host`, `ha_token`, `ha_ssh_key`);
+see `secrets.example.yaml`. Full walkthrough including a fresh HA OS install:
+`docs/home-assistant-pipeline.md`.
 
 ## Verified drivetrain numbers
 

@@ -20,8 +20,7 @@ DEVICE_HOST = "192.168.1.12"
 DEVICE_PREFIX = "wohnzimmer_controller_"
 
 DASHBOARDS = [
-    Path("home-assistant/dashboards/livingroom.yaml"),
-    Path("home-assistant/lovelace-livingroom-dashboard.yaml"),
+    Path("home-assistant/config/dashboards/livingroom.yaml"),
 ]
 
 # ESPHome-Entitaetstyp -> Home-Assistant-Domain. Textsensoren landen in HA

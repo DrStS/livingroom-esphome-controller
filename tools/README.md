@@ -24,5 +24,27 @@ python tools/check_entity_states.py
 | `verify_dashboard_entities.py` | Vergleicht jede im Dashboard referenzierte Entitaet mit der Entitaetsliste des Geraets. Trennt Dashboard-Tippfehler von Problemen der Home-Assistant-Registry. |
 | `test_persistence.py` | Setzt die Referenz, startet den Controller neu und prueft, ob Referenz und Position aus dem NVS zurueckkommen. Bewegt keine Hardware. |
 
+## Home-Assistant-Pipeline
+
+`ha.py` faellt aus dem Rahmen der Liste oben: es redet nicht mit dem
+Controller, sondern mit Home Assistant, und rollt das ganze Setup aus.
+
+```
+python tools/ha.py check      Zugang pruefen (Netz, SSH, Token)
+python tools/ha.py keygen     SSH-Schluessel fuer den Zugang anlegen
+python tools/ha.py setup      Erstinstallation komplett ausrollen
+python tools/ha.py deploy     Dashboards ausrollen
+python tools/ha.py verify     Dashboards gegen die HA-Registry pruefen
+python tools/ha.py --help     alle Kommandos
+```
+
+Zugangsdaten stehen in `secrets.yaml` unter `ha_host`, `ha_token` und
+`ha_ssh_key` (Vorlage: `secrets.example.yaml`). Anleitung inklusive
+Neuinstallation: [`docs/home-assistant-pipeline.md`](../docs/home-assistant-pipeline.md).
+
+Merkhilfe zur Abgrenzung: `verify_dashboard_entities.py` fragt **das Geraet**,
+ob es eine Entitaet liefert. `ha.py verify` fragt **Home Assistant**, ob es sie
+kennt. Erst beide Antworten zusammen sagen, wo ein Problem sitzt.
+
 Hinweis: `encoder_diagnose.py` bewegt Hardware. Vorher pruefen, dass nach oben
 Weg frei ist.
