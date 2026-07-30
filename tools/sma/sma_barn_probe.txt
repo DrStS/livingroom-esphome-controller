@@ -1,0 +1,73 @@
+﻿Lauf: 2026-07-28 00:19:57
+
+=== ERREICHBARE HOSTS ===
+192.168.1.1, 192.168.1.8, 192.168.1.12, 192.168.1.97, 192.168.1.137, 192.168.1.155, 192.168.1.156, 192.168.1.157, 192.168.1.158, 192.168.1.159, 192.168.1.173
+Anzahl: 11
+
+=== ARP (MAC je Host) ===
+192.168.1.1           3c-37-12-22-dc-f5     dynamisch
+192.168.1.8           dc-a6-32-49-a9-78     dynamisch
+192.168.1.12          28-84-85-4b-77-93     dynamisch
+Schnittstelle: 192.168.1.97 --- 0x14
+192.168.1.137         d4-f0-c9-17-43-20     dynamisch
+192.168.1.155         ec-71-db-f3-b9-b3     dynamisch
+192.168.1.156         4e-3e-ea-87-4a-0c     dynamisch
+192.168.1.157         4e-5d-35-fe-a3-a1     dynamisch
+192.168.1.158         00-d0-93-2b-c4-99     dynamisch
+192.168.1.159         00-15-bb-02-92-84     dynamisch
+192.168.1.173         f2-42-f6-46-03-65     dynamisch
+
+=== OFFENE TCP-PORTS ===
+192.168.1.1 -> 80, 443
+192.168.1.8 -> (keine der geprueften)
+192.168.1.12 -> (keine der geprueften)
+192.168.1.97 -> (keine der geprueften)
+192.168.1.137 -> 21, 80, 443
+192.168.1.155 -> 80, 443
+192.168.1.156 -> (keine der geprueften)
+192.168.1.157 -> 80, 443
+192.168.1.158 -> 80
+192.168.1.159 -> 80
+192.168.1.173 -> (keine der geprueften)
+
+=== HTTP-FINGERPRINT (Port 80 / 443) ===
+192.168.1.1 http: HTTP 200 Server='' Title='FRITZ!Box' Len=8020
+192.168.1.1 https: Die zugrunde liegende Verbindung wurde geschlossen: Für den geschützten SSL/TLS-Kanal konnte keine Vertrauensstellung hergestellt werden..
+192.168.1.137 http: Die zugrunde liegende Verbindung wurde geschlossen: Für den geschützten SSL/TLS-Kanal konnte keine Vertrauensstellung hergestellt werden..
+192.168.1.137 https: Die zugrunde liegende Verbindung wurde geschlossen: Für den geschützten SSL/TLS-Kanal konnte keine Vertrauensstellung hergestellt werden..
+192.168.1.155 http: Die zugrunde liegende Verbindung wurde geschlossen: Für den geschützten SSL/TLS-Kanal konnte keine Vertrauensstellung hergestellt werden..
+192.168.1.155 https: Die zugrunde liegende Verbindung wurde geschlossen: Für den geschützten SSL/TLS-Kanal konnte keine Vertrauensstellung hergestellt werden..
+192.168.1.157 http: HTTP 200 Server='' Title='FRITZ!Repeater' Len=8005
+192.168.1.157 https: Die zugrunde liegende Verbindung wurde geschlossen: Für den geschützten SSL/TLS-Kanal konnte keine Vertrauensstellung hergestellt werden..
+192.168.1.158 http: HTTP 200 Server='lighttpd' Title='SMA Energy Meter' Len=3930
+192.168.1.159 http: Der Server hat eine Protokollverletzung ausgeführt.. Section=ResponseHeader Detail=Auf CR muss LF folgen
+
+=== SMA-PFADE (WebBox /rpc, Webconnect /dyn/login.json, ClusterCtrl /culture) ===
+192.168.1.1 /rpc -> Fehler/404
+192.168.1.1 /dyn/login.json -> Fehler/404
+192.168.1.1 /culture -> Fehler/404
+192.168.1.1 /home.htm -> Fehler/404
+192.168.1.1 /index.html -> Fehler/404
+192.168.1.137 /rpc -> Fehler/0
+192.168.1.137 /dyn/login.json -> Fehler/0
+192.168.1.137 /culture -> Fehler/0
+192.168.1.137 /home.htm -> Fehler/0
+192.168.1.137 /index.html -> Fehler/0
+192.168.1.155 /rpc -> Fehler/0
+192.168.1.155 /dyn/login.json -> Fehler/0
+192.168.1.155 /culture -> Fehler/0
+192.168.1.155 /home.htm -> Fehler/0
+192.168.1.155 /index.html -> Fehler/0
+192.168.1.157 /rpc -> Fehler/404
+192.168.1.157 /dyn/login.json -> Fehler/404
+192.168.1.157 /culture -> Fehler/404
+192.168.1.157 /home.htm -> Fehler/404
+192.168.1.157 /index.html -> Fehler/404
+192.168.1.158 /rpc -> HTTP 200 Len=2684
+192.168.1.158 /dyn/login.json -> HTTP 200 Len=2684
+192.168.1.158 /culture -> HTTP 200 Len=2684
+192.168.1.158 /home.htm -> HTTP 200 Len=2684
+192.168.1.158 /index.html -> HTTP 200 Len=2684
+
+=== SPEEDWIRE-DISCOVERY (unicast UDP 9522) ===
+192.168.1.159 len=60 hex=534D4100000402A0000000010002000000010004001000010003000400200000000100040030C0A8019F000400400000000000020070EF0C00000000

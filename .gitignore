@@ -53,6 +53,12 @@ run*.txt
 # Zwischenverzeichnis des Home-Assistant-Deploys (gefilterte secrets.yaml)
 .ha-deploy-tmp/
 
+# Exportarchive im Wurzelverzeichnis. Es sind Momentaufnahmen von components/
+# und secrets.example.yaml -- also Kopien von Dateien, die hier ohnehin
+# versioniert sind, samt __pycache__. Sie zu committen wuerde nur Binaerballast
+# erzeugen, dessen Inhalt schon im Git steht.
+/*.zip
+
 # Editors / OS
 .vscode/*
 !.vscode/extensions.json
