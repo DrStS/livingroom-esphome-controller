@@ -14,6 +14,7 @@ einem Hinweis, wie sie zu beschaffen sind, statt mit einem Stacktrace.
 Aufruf immer aus dem Projektwurzelverzeichnis:
 
     python tools/ha.py check                 Zugang pruefen (erster Schritt)
+    python tools/ha.py wait                  auf ein frisch gebootetes HA warten
     python tools/ha.py keygen                SSH-Schluessel fuer den Zugang anlegen
     python tools/ha.py deploy                Dashboards ausrollen
     python tools/ha.py deploy --core         zusaetzlich configuration.yaml
@@ -338,6 +339,74 @@ def cmd_check(cfg: Settings, args: argparse.Namespace) -> None:
         print(f"{problems} offene Punkte. Anleitung: docs/home-assistant-pipeline.md")
         sys.exit(1)
     print("Zugang vollstaendig. Naechster Schritt: python tools/ha.py setup")
+
+
+# =============================================================================
+# Kommando: wait -- auf ein frisch gebootetes System warten
+# =============================================================================
+def candidate_hosts(cfg: Settings) -> list[str]:
+    """Adressen, unter denen Home Assistant vermutet wird, in dieser Reihenfolge.
+
+    Nach einer Neuinstallation greift die DHCP-Lease meist sofort, weil die
+    MAC-Adresse gleich bleibt. Falls nicht, ist der mDNS-Name der zweite Weg.
+    """
+    hosts = [cfg.host]
+    for name in ("homeassistant.local", "homeassistant"):
+        address = resolve_ipv4(name)
+        if address and address not in hosts:
+            hosts.append(address)
+    return hosts
+
+
+def cmd_wait(cfg: Settings, args: argparse.Namespace) -> None:
+    deadline = time.time() + args.minutes * 60
+    print(f"Warte auf Home Assistant (bis zu {args.minutes} min).")
+    print(f"Erwartet unter {cfg.host}:{cfg.port}, zusaetzlich wird der mDNS-Name geprueft.\n")
+
+    attempt = 0
+    while time.time() < deadline:
+        attempt += 1
+        for host in candidate_hosts(cfg):
+            if tcp_open(host, cfg.port, timeout=3):
+                print(f"\n{OK} Home Assistant antwortet unter {host}:{cfg.port}")
+                if host != cfg.host:
+                    print(f"{WARN} Das ist NICHT die Adresse aus secrets.yaml ({cfg.host}).")
+                    print(f"        Entweder ha_host auf {host} setzen oder die DHCP-Lease pruefen.")
+                # Waehrend des Starts antwortet der Port schon, die API aber noch
+                # nicht. Ohne Token laesst sich das nicht unterscheiden, deshalb
+                # nur der Hinweis statt einer Scheingenauigkeit.
+                config = api_soft(Settings({**vars_of(cfg), "ha_host": host}), "config")
+                if isinstance(config, dict):
+                    print(f"{OK} API bereit: HA {config.get('version')}, "
+                          f"Status {config.get('state')}")
+                else:
+                    print(f"{WARN} Oberflaeche erreichbar, API noch nicht bestaetigt.")
+                    print("        Ohne gueltiges Token ist das normal -- weiter mit dem")
+                    print("        Onboarding im Browser, danach: python tools/ha.py check")
+                print(f"\nOeffnen: http://{host}:{cfg.port}")
+                return
+        print(f"     noch nicht da ... ({attempt * 10} s)")
+        time.sleep(10)
+
+    die(f"Home Assistant war innerhalb von {args.minutes} min nicht erreichbar.",
+        "Haengt der Pi am Netz? Zeigt der Router eine Lease fuer seine MAC-Adresse?\n"
+        "Beim ersten Start nach dem Schreiben des Abbilds kann es einige Minuten\n"
+        "dauern, weil das Dateisystem erst angelegt wird.")
+
+
+def vars_of(cfg: Settings) -> dict[str, Any]:
+    """Baut die secrets-Darstellung einer Settings-Instanz nach, damit sich eine
+    Variante mit anderem Host erzeugen laesst."""
+    return {
+        "ha_host": cfg.host,
+        "ha_port": cfg.port,
+        "ha_scheme": cfg.scheme,
+        "ha_token": cfg.token,
+        "ha_ssh_user": cfg.ssh_user,
+        "ha_ssh_port": cfg.ssh_port,
+        "ha_ssh_key": cfg.ssh_key,
+        "ha_config_dir": cfg.config_dir,
+    }
 
 
 # =============================================================================
@@ -772,6 +841,10 @@ def main() -> None:
 
     sub.add_parser("check", help="Erreichbarkeit, SSH und API-Token pruefen")
 
+    wait = sub.add_parser("wait", help="auf ein frisch gebootetes Home Assistant warten")
+    wait.add_argument("--minutes", type=int, default=15,
+                      help="maximale Wartezeit (Vorgabe 15)")
+
     keygen = sub.add_parser("keygen", help="SSH-Schluessel fuer den Zugang anlegen")
     keygen.add_argument("--force", action="store_true", help="bestehenden Schluessel ersetzen")
 
@@ -808,6 +881,7 @@ def main() -> None:
 
     handlers = {
         "check": cmd_check,
+        "wait": cmd_wait,
         "keygen": cmd_keygen,
         "deploy": cmd_deploy,
         "validate": cmd_validate,

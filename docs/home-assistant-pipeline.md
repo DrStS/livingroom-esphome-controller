@@ -36,9 +36,20 @@ Spiel sind.
    Windows aber gern auf eine link-local IPv6-Adresse auf, mit der die Pipeline
    nichts anfangen kann.
 
-4. **Onboarding** unter `http://<adresse>:8123`. Eigenen Administrator anlegen,
-   Standort, Zeitzone und Einheiten setzen. Bei "Geraete gefunden" nichts
-   uebernehmen, das kommt spaeter kontrolliert.
+4. **Auf den ersten Start warten:**
+
+   ```
+   python tools/ha.py wait
+   ```
+
+   Meldet, sobald die Oberflaeche antwortet, und nennt die Adresse. Weicht sie
+   von `ha_host` in `secrets.yaml` ab, wird das ausdruecklich gesagt -- dann
+   greift die DHCP-Lease nicht. Der erste Start nach dem Schreiben des Abbilds
+   dauert einige Minuten, weil das Dateisystem erst angelegt wird.
+
+   Dann **Onboarding** unter `http://<adresse>:8123`. Eigenen Administrator
+   anlegen, Standort, Zeitzone und Einheiten setzen. Bei "Geraete gefunden"
+   nichts uebernehmen, das kommt spaeter kontrolliert.
 
 5. **Zweiten Administrator fuer die Automatisierung anlegen.**
    Einstellungen → Personen → Reiter *Benutzer* → *Benutzer hinzufuegen*:
@@ -135,6 +146,7 @@ python tools/ha.py verify
 
 | Aufgabe | Befehl |
 |---|---|
+| Ist Home Assistant schon wieder da? | `python tools/ha.py wait` |
 | Dashboard geaendert | `python tools/ha.py deploy` |
 | `configuration.yaml` geaendert | `python tools/ha.py deploy --core` dann `restart` |
 | ESPHome-Konfiguration auf den Host spiegeln | `python tools/ha.py deploy --esphome` |
