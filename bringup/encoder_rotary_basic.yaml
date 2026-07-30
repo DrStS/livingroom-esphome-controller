@@ -1,0 +1,165 @@
+esphome:
+  name: wohnzimmer-controller
+  friendly_name: "Wohnzimmer Encoder Rotary + Motor Basic"
+  on_boot:
+    priority: -100
+    then:
+      - output.set_level: {id: motor_rpwm, level: 0%}
+      - output.set_level: {id: motor_lpwm, level: 0%}
+      - output.turn_off: motor_enable
+      - logger.log: "Rotary+Motor-Test bereit; Motor bleibt AUS."
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework: {type: esp-idf}
+
+logger: {level: INFO}
+
+api:
+  encryption:
+    key: !secret wohnzimmer_api_key
+
+ota:
+  - platform: esphome
+    password: !secret wohnzimmer_ota_password
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+output:
+  - platform: ledc
+    id: motor_rpwm
+    pin: GPIO40
+    frequency: 20kHz
+  - platform: ledc
+    id: motor_lpwm
+    pin: GPIO41
+    frequency: 20kHz
+  - platform: gpio
+    id: motor_enable
+    pin: GPIO39
+
+sensor:
+  - platform: rotary_encoder
+    name: "Encoder Rotary Position"
+    id: encoder_rotary
+    pin_a:
+      number: GPIO16
+      mode: {input: true}
+    pin_b:
+      number: GPIO18
+      mode: {input: true}
+    resolution: 1
+    restore_mode: ALWAYS_ZERO
+
+  - platform: template
+    name: "Encoder GPIO16 Direct Edges"
+    id: direct_edges_a
+    accuracy_decimals: 0
+    update_interval: never
+  - platform: template
+    name: "Encoder GPIO18 Direct Edges"
+    id: direct_edges_b
+    accuracy_decimals: 0
+    update_interval: never
+  - platform: template
+    name: "Encoder GPIO16 High Percent"
+    id: direct_high_a
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: never
+  - platform: template
+    name: "Encoder GPIO18 High Percent"
+    id: direct_high_b
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: never
+
+button:
+  - platform: template
+    name: "Motor LPWM 100 Prozent 500 ms"
+    on_press:
+      - script.stop: run_rpwm
+      - script.execute: run_lpwm
+  - platform: template
+    name: "Motor RPWM 100 Prozent 500 ms"
+    on_press:
+      - script.stop: run_lpwm
+      - script.execute: run_rpwm
+  - platform: template
+    name: "Motor STOP"
+    on_press:
+      - script.stop: run_lpwm
+      - script.stop: run_rpwm
+      - output.set_level: {id: motor_rpwm, level: 0%}
+      - output.set_level: {id: motor_lpwm, level: 0%}
+      - output.turn_off: motor_enable
+
+script:
+  - id: run_lpwm
+    mode: restart
+    then:
+      - output.set_level: {id: motor_rpwm, level: 0%}
+      - output.set_level: {id: motor_lpwm, level: 0%}
+      - output.turn_off: motor_enable
+      - delay: 200ms
+      - output.set_level: {id: motor_lpwm, level: 100%}
+      - output.turn_on: motor_enable
+      - lambda: |-
+          uint32_t ea = 0, eb = 0, ha = 0, hb = 0, samples = 0;
+          int la = gpio_get_level(GPIO_NUM_16);
+          int lb = gpio_get_level(GPIO_NUM_18);
+          const uint32_t started = millis();
+          while (millis() - started < 500) {
+            const int a = gpio_get_level(GPIO_NUM_16);
+            const int b = gpio_get_level(GPIO_NUM_18);
+            if (a != la) { ea++; la = a; }
+            if (b != lb) { eb++; lb = b; }
+            ha += (uint32_t) a;
+            hb += (uint32_t) b;
+            samples++;
+          }
+          id(direct_edges_a).publish_state((float) ea);
+          id(direct_edges_b).publish_state((float) eb);
+          id(direct_high_a).publish_state(samples ? 100.0f * ha / samples : 0.0f);
+          id(direct_high_b).publish_state(samples ? 100.0f * hb / samples : 0.0f);
+      - output.set_level: {id: motor_lpwm, level: 0%}
+      - output.turn_off: motor_enable
+
+  - id: run_rpwm
+    mode: restart
+    then:
+      - output.set_level: {id: motor_rpwm, level: 0%}
+      - output.set_level: {id: motor_lpwm, level: 0%}
+      - output.turn_off: motor_enable
+      - delay: 200ms
+      - output.set_level: {id: motor_rpwm, level: 100%}
+      - output.turn_on: motor_enable
+      - lambda: |-
+          uint32_t ea = 0, eb = 0, ha = 0, hb = 0, samples = 0;
+          int la = gpio_get_level(GPIO_NUM_16);
+          int lb = gpio_get_level(GPIO_NUM_18);
+          const uint32_t started = millis();
+          while (millis() - started < 500) {
+            const int a = gpio_get_level(GPIO_NUM_16);
+            const int b = gpio_get_level(GPIO_NUM_18);
+            if (a != la) { ea++; la = a; }
+            if (b != lb) { eb++; lb = b; }
+            ha += (uint32_t) a;
+            hb += (uint32_t) b;
+            samples++;
+          }
+          id(direct_edges_a).publish_state((float) ea);
+          id(direct_edges_b).publish_state((float) eb);
+          id(direct_high_a).publish_state(samples ? 100.0f * ha / samples : 0.0f);
+          id(direct_high_b).publish_state(samples ? 100.0f * hb / samples : 0.0f);
+      - output.set_level: {id: motor_rpwm, level: 0%}
+      - output.turn_off: motor_enable

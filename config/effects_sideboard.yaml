@@ -1,5 +1,6 @@
-# SIDEBOARD: normales ESPHome-Gamma bleibt aktiv. Nur die zwei Fireplace-
-# Effekte schreiben bewusst ueber RawPixelOutput direkt in den PWM-Puffer.
+# SIDEBOARD (111 px): normales ESPHome-Gamma bleibt aktiv. Nur die beiden
+# Fireplace-Effekte schreiben bewusst ueber RawPixelOutput direkt in den
+# PWM-Puffer.
 - fireplace:
     name: "Fireplace"
     raw_output_id: sideboard_ambient_out
@@ -10,10 +11,38 @@
     green_gain: 100%
     white_gain: 100%
 
-# Zeigt die zehn zentralen Raw-PWM-Palettenstuetzstellen gleichzeitig auf dem
-# eingebauten Strip. Diese Ansicht zuerst visuell freigeben/kalibrieren.
+# CINEMA: statisches, ruhiges Licht fuer den Filmbetrieb.
+# Der Sideboard-Strip liegt direkt unter dem Bildschirm -- das Fireplace-
+# Flackern (9-13 Hz) irritiert dort. Dieser Effekt animiert deshalb NICHT,
+# er rendert nur ein festes Parabelprofil: Mitte hell, Ecken dunkel, analog zu
+# den Cabinet-Glaskanten, aber mit staerkerem Abfall nach aussen.
+# Alle Kennwerte stehen in config/hardware.yaml (cinema_*).
+- addressable_lambda:
+    name: "Cinema"
+    # Statisches Bild: 1 s Intervall genuegt, es aendert sich nichts.
+    update_interval: 1s
+    lambda: |-
+      const int count = it.size();
+      if (count <= 1)
+        return;
+      // Normierter Abstand zur Strichmitte: 0 = Mitte, 1 = Ende.
+      const float mid = (count - 1) / 2.0f;
+      for (int i = 0; i < count; i++) {
+        float d = fabsf((float) i - mid) / mid;
+        float g = 1.0f - d * d;
+        if (g < 0.0f)
+          g = 0.0f;
+        // Exponent > 1 senkt die Ecken zusaetzlich ab, ohne die Mitte zu daempfen.
+        g = powf(g, ${cinema_falloff}f);
+        const float f = g * ${cinema_center_level}f;
+        it[i] = Color((uint8_t) (${cinema_red} * f), (uint8_t) (${cinema_green} * f), 0,
+                      (uint8_t) (${cinema_white} * f));
+      }
+
+# Kalibrierbild, KEINE Wohnzimmer-Szene: zeigt die zehn zentralen Raw-PWM-
+# Palettenstuetzstellen gleichzeitig. Nur zum Abgleich beider Strips.
 - fireplace_palette:
-    name: "Fireplace Palette"
+    name: "Fireplace Palette (Kalibrierung)"
     raw_output_id: sideboard_ambient_out
     role: DIRECT
     output_gain: 100%

@@ -1,0 +1,55 @@
+esphome:
+  name: wohnzimmer-controller
+  friendly_name: "Wohnzimmer Encoder Pins Basic"
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework: {type: esp-idf}
+
+logger: {level: INFO}
+
+api:
+  encryption:
+    key: !secret wohnzimmer_api_key
+
+ota:
+  - platform: esphome
+    password: !secret wohnzimmer_ota_password
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+sensor:
+  - platform: pulse_counter
+    name: "Encoder A Pulse Rate"
+    id: encoder_a_rate
+    pin:
+      number: GPIO16
+      mode: {input: true, pullup: true}
+    count_mode: {rising_edge: INCREMENT, falling_edge: INCREMENT}
+    internal_filter: 0us
+    update_interval: 500ms
+    total:
+      name: "Encoder A Total Edges"
+      id: encoder_a_total
+
+  - platform: pulse_counter
+    name: "Encoder B Pulse Rate"
+    id: encoder_b_rate
+    pin:
+      number: GPIO18
+      mode: {input: true, pullup: true}
+    count_mode: {rising_edge: INCREMENT, falling_edge: INCREMENT}
+    internal_filter: 0us
+    update_interval: 500ms
+    total:
+      name: "Encoder B Total Edges"
+      id: encoder_b_total

@@ -2,66 +2,78 @@
 
 This project replaces the old Arduino/OpenHAB serial furniture controller with an ESP32-S3 Ethernet/PoE ESPHome controller.
 
-The ESP32 owns the local real-time behavior:
-- TV lift state machine
-- encoder/endstop safety
-- LED scene engine
-- fan logic
-- power rail monitoring
-- sensors
+The ESP owns all local real-time behavior, so the room keeps working even without Home Assistant:
+- TV lift closed-loop position control (own FreeRTOS task, 1 ms, trapezoid profile plus PI speed control)
+- lift safety: soft limits 0..94500 counts, stall cutoff, timeout, heartbeat watchdogs, NVS position/reference persistence
+- LED scene engine on two SK6812 RGBW strips (111 px sideboard, 102 px cabinet)
+- temperature-driven fan control
+- power rail monitoring (2× INA226)
+- room and cabinet sensors
 
-Home Assistant owns the room-level intent:
-- Romantic Campfire
-- Cinema
-- Gaming
-- Maintenance
-- TV Lift Show
-- Off
+Home Assistant is the user interface and the history/graph store. Room scenes are
+selected on the ESP via `select.wohnzimmer_controller_livingroom_light_scene`:
+Manual, Aus, Kaminfeuer, Vitrine, Kaminfeuer + Vitrine, Cinema, Feuerwerk.
+
+The earlier Home Assistant room-mode package (helper plus scripts) was deleted;
+the ESP scene select replaces it.
 
 ## Main files
 
 ```text
-livingroom_mock.yaml
-  Hardware-free ESPHome mock for Home Assistant setup.
-
 livingroom.yaml
-  Real hardware firmware.
+  The firmware. Real hardware, no mock.
 
 config/pins.yaml
   Central GPIO mapping.
 
 config/hardware.yaml
-  Central hardware parameters: LED counts, INA226 addresses, shunts, lift pulse limits.
+  Central hardware parameters: LED counts, cabinet zone map, cinema_* effect
+  parameters, INA226 addresses and shunts, lift travel and drivetrain ratios.
 
-components/living_room/
-  ESPHome external component and C++20 controller core.
+config/effects_sideboard.yaml / config/effects_cabinet.yaml
+  Per-strip effect lists.
 
-home-assistant/packages/livingroom_modes.yaml
-  Whole-room mode helper, scripts, and automations.
+components/
+  ESPHome external components and C++ cores:
+  lift_motor (closed-loop lift), pcnt_quadrature (hardware quadrature encoder),
+  fireplace_effect, spi_clockless_led, serialized_rmt_led.
+
+
+tools/
+  Diagnostic scripts that talk to the running device over the ESPHome API:
+  check_entity_states.py, check_lift_status.py, dump_entity_ids.py,
+  check_light_effects.py, watch_lift_logs.py, encoder_diagnose.py.
+  See tools/README.md. encoder_diagnose.py moves the lift.
+
+bringup/
+  Archived encoder/motor bring-up firmwares, kept for traceability only.
+  These are complete firmwares that replace the production one and drive the
+  motor outputs without encoder supervision. Read bringup/README.md before use.
 
 home-assistant/dashboards/livingroom.yaml
-  Built-in Lovelace dashboard.
+  Lovelace dashboard with three views: Uebersicht, Verlauf, Diagnose.
+
+home-assistant/lovelace-livingroom-dashboard.yaml
+  Compact single-view alternative.
 
 docs/
-  Setup and design documentation.
+  Setup and design documentation. Start with docs/entity-map.md and
+  docs/hardware-pinmap.md.
 ```
 
-## First target
+## Verified drivetrain numbers
 
-Install Home Assistant on the Raspberry Pi 4, install ESPHome Device Builder, flash `livingroom_mock.yaml`, and verify the full Home Assistant UI before connecting motor, LEDs, INA226 sensors, or endstops.
+| Item | Value |
+|---|---|
+| Encoder | Hall, on the motor shaft, 12 counts per motor revolution (3 signal cycles per channel, x4) |
+| Gearbox | 48:1 |
+| Screw lead | 4 mm |
+| Resolution | 576 counts per screw revolution → 144 counts/mm → 1 count = 6.94 µm |
+| Travel | 94500 counts = 656.25 mm |
+| Cruise speed | 1500 counts/s (~10.4 mm/s, full travel about 63 s) |
 
-## Why there is a mock
-
-The mock creates the same Home Assistant entities without any hardware risk:
-- no motor outputs
-- no LED outputs
-- no INA226 dependency
-- no DS18B20/SHT45 dependency
-- simulated lift position
-- simulated rails
-- simulated fan RPM and temperatures
-
-This lets us finish dashboards, mode scripts, and automations first.
+The datasheet line "6 signals per rotation" counts edges, not cycles. Confirmed
+by comparing the PCNT delta (496) against the summed A+B edges (494).
 
 ## Why pins are in YAML
 
@@ -74,18 +86,18 @@ YAML:
 - GPIO mapping
 - device addresses
 - pixel counts
+- travel limits, gear ratio, motion profile
 - board variants
 
 C++20:
 - lift logic
 - safety
-- motion profile
+- motion profile execution
 - LED scene generation
 - fan logic
 ```
 
 That keeps the C++ core testable and board-independent.
-
 
 ## Public repository setup
 

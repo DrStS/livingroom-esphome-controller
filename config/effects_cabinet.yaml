@@ -23,11 +23,11 @@
     green_gain: 100%
     white_gain: 100%
 
-# Kalibrier-Palette: zeigt die zentralen FIRE_PALETTE-Rohwerte 1:1 (der Effekt
-# umgeht bewusst das Reflection-Profil, damit beide Strips identische Rohwerte
-# zeigen). output_gain hier 100 %, es ist nur ein Abnahme-/Kalibrierbild.
+# Kalibrierbild, KEINE Wohnzimmer-Szene: zeigt die zentralen FIRE_PALETTE-
+# Rohwerte 1:1 (der Effekt umgeht bewusst das Reflection-Profil, damit beide
+# Strips identische Rohwerte zeigen). output_gain hier 100 %.
 - fireplace_palette:
-    name: "Fireplace Palette"
+    name: "Fireplace Palette (Kalibrierung)"
     raw_output_id: cabinet_glass_edge_out
     role: REFLECTION
     output_gain: 100%
@@ -37,8 +37,11 @@
 # MUSEUM: Spots kraeftig warmweiss, Kanten als warmweisser Parabel-Verlauf.
 # LOGISCHE Pre-Gamma-Werte (kein powf) -> ESPHome-Gamma 2.8 formt die
 # Wahrnehmung, HA-Slider skaliert. Beim Start Reveal von unten nach oben.
+# Das Kantenprofil bleibt bewusst bei g = 1 - d^2 (unveraendert); der staerkere
+# Abfall gilt nur fuer den Cinema-Effekt am Sideboard.
+# Heisst nur noch "Museum" -- der Effekt existiert ausschliesslich hier.
 - addressable_lambda:
-    name: "Cabinet Museum"
+    name: "Museum"
     update_interval: 33ms
     lambda: |-
       static const int Z_START[6] = {0, 25, 34, 59, 68, 93};

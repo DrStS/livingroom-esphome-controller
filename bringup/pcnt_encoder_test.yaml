@@ -1,0 +1,250 @@
+substitutions:
+  pin_encoder_a: GPIO16
+  pin_encoder_b: GPIO18
+  pin_motor_rpwm: GPIO40
+  pin_motor_lpwm: GPIO41
+  pin_motor_enable: GPIO39
+
+esphome:
+  name: wohnzimmer-controller
+  friendly_name: "Wohnzimmer Controller PCNT-Test"
+  on_boot:
+    priority: -100
+    then:
+      - output.set_level:
+          id: motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: motor_lpwm
+          level: 0%
+      - output.turn_off: motor_enable
+      - logger.log: "PCNT-Test bereit; Motor bleibt nach Boot AUS."
+
+esp32:
+  board: esp32-s3-devkitc-1
+  variant: esp32s3
+  flash_size: 16MB
+  framework:
+    type: esp-idf
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret wohnzimmer_api_key
+
+ota:
+  - platform: esphome
+    password: !secret wohnzimmer_ota_password
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [pcnt_quadrature]
+
+output:
+  - platform: ledc
+    id: motor_rpwm
+    pin: ${pin_motor_rpwm}
+    frequency: 20kHz
+  - platform: ledc
+    id: motor_lpwm
+    pin: ${pin_motor_lpwm}
+    frequency: 20kHz
+  - platform: gpio
+    id: motor_enable
+    pin: ${pin_motor_enable}
+
+sensor:
+  # Ein einziger Hardware-Zaehler: keine zweite PCNT-Instanz und keine
+  # konkurrierende GPIO-Nutzung. Die Position kann auch bei ausgeschaltetem
+  # Motor durch Drehen der Welle von Hand geprueft werden.
+  - platform: pcnt_quadrature
+    id: motor_encoder
+    name: "Motor Encoder Position"
+    pin_a:
+      number: ${pin_encoder_a}
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: ${pin_encoder_b}
+      mode:
+        input: true
+        pullup: true
+    resolution: 4
+    internal_filter: 10us
+    update_interval: 100ms
+    speed:
+      name: "Motor Encoder Speed"
+      id: motor_encoder_speed
+
+  # Letztes Rohmessergebnis der Motorfahrt. Damit ist die Diagnose nach dem
+  # kurzen Test weiterhin per Home Assistant/API ablesbar.
+  - platform: template
+    id: raw_edges_a
+    name: "Encoder Raw Edges A"
+    accuracy_decimals: 0
+    update_interval: never
+  - platform: template
+    id: raw_edges_b
+    name: "Encoder Raw Edges B"
+    accuracy_decimals: 0
+    update_interval: never
+  - platform: template
+    id: raw_high_a
+    name: "Encoder Raw High A"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: never
+  - platform: template
+    id: raw_high_b
+    name: "Encoder Raw High B"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    update_interval: never
+
+button:
+  - platform: template
+    id: encoder_zero
+    name: "Encoder Nullen"
+    on_press:
+      - pcnt_quadrature.zero:
+          id: motor_encoder
+      - logger.log: "Encoder auf 0 gesetzt. Jetzt Welle von Hand drehen oder einen Motortest starten."
+
+  - platform: template
+    id: motor_test_lpwm
+    name: "Motor Test LPWM 100 Prozent 500 ms"
+    on_press:
+      - script.stop: test_rpwm
+      - script.execute: test_lpwm
+
+  - platform: template
+    id: motor_test_rpwm
+    name: "Motor Test RPWM 100 Prozent 500 ms"
+    on_press:
+      - script.stop: test_lpwm
+      - script.execute: test_rpwm
+
+  - platform: template
+    id: motor_test_stop
+    name: "Motor STOP"
+    on_press:
+      - script.stop: test_lpwm
+      - script.stop: test_rpwm
+      - output.set_level:
+          id: motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: motor_lpwm
+          level: 0%
+      - output.turn_off: motor_enable
+      - logger.log: "Motor STOP: beide PWM=0, Enable AUS."
+
+script:
+  # Volle Duty ist Absicht: Die alten 30-Prozent-Tests lagen unterhalb der
+  # gemessenen Losbrechschwelle und konnten Encoder und Motor nicht pruefen.
+  # 500 ms begrenzen den Weg; jeder Lauf endet immer mit PWM=0 und Enable AUS.
+  - id: test_lpwm
+    mode: restart
+    then:
+      - output.set_level:
+          id: motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: motor_lpwm
+          level: 0%
+      - output.turn_off: motor_enable
+      - pcnt_quadrature.zero:
+          id: motor_encoder
+      - delay: 200ms
+      - logger.log: "TEST START: LPWM 100 Prozent fuer 500 ms"
+      - output.set_level:
+          id: motor_lpwm
+          level: 100%
+      - output.turn_on: motor_enable
+      - lambda: |-
+          uint32_t edges_a = 0, edges_b = 0, samples = 0;
+          float high_a = 0.0f, high_b = 0.0f;
+          id(motor_encoder).sample_raw_levels(500, &edges_a, &edges_b,
+                                               &high_a, &high_b, &samples);
+          id(raw_edges_a).publish_state((float) edges_a);
+          id(raw_edges_b).publish_state((float) edges_b);
+          id(raw_high_a).publish_state(high_a);
+          id(raw_high_b).publish_state(high_b);
+          ESP_LOGI("basic_test", "ROH LPWM: A=%u B=%u, High A=%.1f%% B=%.1f%%",
+                   (unsigned) edges_a, (unsigned) edges_b, high_a, high_b);
+      - output.set_level:
+          id: motor_lpwm
+          level: 0%
+      - output.turn_off: motor_enable
+      - delay: 100ms
+      - lambda: |-
+          ESP_LOGI("basic_test", "TEST ENDE LPWM: Encoder=%lld Schritte",
+                   (long long) id(motor_encoder).get_position());
+
+  - id: test_rpwm
+    mode: restart
+    then:
+      - output.set_level:
+          id: motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: motor_lpwm
+          level: 0%
+      - output.turn_off: motor_enable
+      - pcnt_quadrature.zero:
+          id: motor_encoder
+      - delay: 200ms
+      - logger.log: "TEST START: RPWM 100 Prozent fuer 500 ms"
+      - output.set_level:
+          id: motor_rpwm
+          level: 100%
+      - output.turn_on: motor_enable
+      - lambda: |-
+          uint32_t edges_a = 0, edges_b = 0, samples = 0;
+          float high_a = 0.0f, high_b = 0.0f;
+          id(motor_encoder).sample_raw_levels(500, &edges_a, &edges_b,
+                                               &high_a, &high_b, &samples);
+          id(raw_edges_a).publish_state((float) edges_a);
+          id(raw_edges_b).publish_state((float) edges_b);
+          id(raw_high_a).publish_state(high_a);
+          id(raw_high_b).publish_state(high_b);
+          ESP_LOGI("basic_test", "ROH RPWM: A=%u B=%u, High A=%.1f%% B=%.1f%%",
+                   (unsigned) edges_a, (unsigned) edges_b, high_a, high_b);
+      - output.set_level:
+          id: motor_rpwm
+          level: 0%
+      - output.turn_off: motor_enable
+      - delay: 100ms
+      - lambda: |-
+          ESP_LOGI("basic_test", "TEST ENDE RPWM: Encoder=%lld Schritte",
+                   (long long) id(motor_encoder).get_position());
+
+# Passiver Encoder-Handtest: Der Motor bleibt aus. In jedem 300-ms-Zyklus
+# werden die GPIO-Pegel 200 ms lang direkt beobachtet und danach publiziert.
+# So sind auch ein einzelner defekter Kanal oder feststehende Pegel sichtbar.
+interval:
+  - interval: 300ms
+    then:
+      - lambda: |-
+          uint32_t edges_a = 0, edges_b = 0, samples = 0;
+          float high_a = 0.0f, high_b = 0.0f;
+          id(motor_encoder).sample_raw_levels(200, &edges_a, &edges_b,
+                                               &high_a, &high_b, &samples);
+          id(raw_edges_a).publish_state((float) edges_a);
+          id(raw_edges_b).publish_state((float) edges_b);
+          id(raw_high_a).publish_state(high_a);
+          id(raw_high_b).publish_state(high_b);

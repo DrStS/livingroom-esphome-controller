@@ -1,7 +1,9 @@
 # Add this to /config/configuration.yaml
-
-homeassistant:
-  packages: !include_dir_named packages
+#
+# Only the lovelace block is needed. The former "homeassistant: packages:" line
+# was removed together with the room-mode package: room scenes now live on the
+# ESP (select.wohnzimmer_controller_livingroom_light_scene), so no Home Assistant
+# package has to be included any more.
 
 lovelace:
   mode: yaml

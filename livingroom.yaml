@@ -11,11 +11,9 @@
 #   - 2x SK6812 RGBW LED-Strips (Zuordnung nach Kabellaenge optimiert):
 #       * Sideboard   GPIO45 -> SPI-DMA (SPI3, eigener Treiber, kurzes Kabel)
 #       * Glass Edge  GPIO46 -> RMT-DMA (langes Kabel -> mehr Signalreserve)
-#   - Motor IBT-2/BTS7960: RPWM/LPWM/Enable (Ausgaenge verdrahtet, per
-#     "Motor Test Mode"-Schalter testbar)
-#
-# NOCH MOCK (bis Motor + Encoder + Endschalter mechanisch verbaut sind):
-#   - TV-Lift-Cover (Positions-Simulation ueber Template)
+#   - Motor IBT-2/BTS7960: RPWM/LPWM/Enable mit PCNT-Quadraturencoder;
+#     LiftMotor ist alleiniger aktiver Owner der Ausgaenge.
+#   - TV-Lift-Cover mit echter Position nach manueller Referenzierung
 # =============================================================================
 
 substitutions:
@@ -38,33 +36,31 @@ esphome:
   project:
     name: sicklinger.livingroom_controller
     version: "0.1.0"
-  # Beim Booten Motor sicher stillsetzen und Luefter sanft anlaufen lassen.
+  # Bootaktionen betreffen nur den Luefter und das Wiederherstellen der Szene.
+  # LiftMotor setzt den Motor in setup() sicher aus; hier darf keinerlei
+  # Motorfahrt oder Motorausgabe stehen.
+  #
+  # ZUSTAND NACH STROMAUSFALL: Beide Strips stellen ihren letzten Zustand selbst
+  # wieder her (restore_mode: RESTORE_DEFAULT_OFF -- Helligkeit, Farbe, Effekt
+  # und Ein/Aus liegen im NVS). Frueher stand hier ein fester Teststartzustand,
+  # der genau das ueberschrieben hat; er ist entfernt.
   on_boot:
     priority: -100
     then:
-      - output.turn_off: out_motor_enable
-      - output.set_level:
-          id: out_motor_rpwm
-          level: 0%
-      - output.set_level:
-          id: out_motor_lpwm
-          level: 0%
       # Luefter-Anlauf: kurz kraeftiger, damit er sicher losdreht.
       - output.set_level:
           id: out_fan_pwm
           level: 45%
       # Kurzer Delay wartet auf Light-Init.
       - delay: 2s
-      # TEST-Startzustand: beide Strips gleichzeitig aktiv, um die Serialisierung
-      # zu pruefen -- Sideboard dynamisches Feuer, Cabinet Museum.
-      - light.turn_on:
-          id: light_sideboard_ambient
-          brightness: 100%
-          effect: "Fireplace"
-      - light.turn_on:
-          id: light_cabinet_glass_edge
-          brightness: 100%
-          effect: "Cabinet Museum"
+      # War eine Szene aktiv, wird sie erneut angewendet -- sonst behalten die
+      # Lichter einfach ihren wiederhergestellten Einzelzustand. Das Anwenden
+      # erfolgt bewusst erst hier, wenn alle Lichter initialisiert sind.
+      - if:
+          condition:
+            lambda: 'return id(livingroom_light_scene).current_option() != "Manual";'
+          then:
+            - script.execute: apply_light_scene
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -77,12 +73,96 @@ psram:
   mode: octal
   speed: 80MHz
 
+# =============================================================================
+# POSITIONSREGELUNG auf eigenem FreeRTOS-Task (Kern 1, fester 1-ms-Takt).
+# LiftMotor ist alleiniger Motor-Owner, liest PCNT direkt und startet den Task
+# in setup(). Der Taskstart selbst gibt den Motor nicht frei.
+# Logische Richtung: positive Encoderposition/LPWM = Oeffnen/Aufwaerts;
+# 0 = geschlossen/unten, 940 = offen/oben. Die Motorzuordnung wurde beim
+# manuellen Test bestaetigt; die Encoder-Invertierung bleibt false.
+# =============================================================================
+lift_motor:
+  id: lift
+  rpwm: out_motor_rpwm
+  lpwm: out_motor_lpwm
+  enable: out_motor_enable
+  encoder: motor_encoder
+  min_position: 0
+  max_position: ${lift_top_position_pulses}
+  period: 1ms
+  task_core: 1
+  task_priority: 10
+  # Duty ist nur noch Stellgroesse des Geschwindigkeitsreglers.
+  # duty_min_up/down = richtungsabhaengige Vorsteuerung (Losbrechmoment),
+  # duty_max = Saettigungsgrenze des Reglers. Reicht der Lift max_speed nicht,
+  # ist zuerst duty_max anzuheben.
+  # Toleranz in Counts: bei 1500 Counts/s ist 1 Count nicht sinnvoll haltbar.
+  tolerance: 4
+  duty_min_up: 14%
+  duty_min_down: 12%
+  # 1500 Counts/s brauchen rund 62 Prozent Duty; 90 Prozent lassen dem Regler
+  # Reserve fuer Last, Reibung und Aufwaertsfahrt.
+  duty_max: 90%
+  # error_full wird von der Geschwindigkeitsregelung nicht mehr genutzt
+  # (Altwert der frueheren Duty-Kennlinie, nur zur Kompatibilitaet).
+  error_full: 12.0
+  fine_window: 6
+  pulse_period: 4
+  brake_time: 200ms
+  # Der PI-Regler braucht beim Losbrechen Zeit, bis der I-Anteil genug Duty
+  # aufgebaut hat -- daher 800 ms statt 500 ms. Schutz gegen echte Blockade
+  # bleibt voll erhalten (Zaehler laeuft nur bei Sollgeschwindigkeit > 0).
+  stall_time: 800ms
+  # --- Trapezprofil, alles in Encoder-Counts pro Sekunde ---
+  # 144 Counts/mm laut Uebersetzung (12 x 48 / 4 mm). 1500 Counts/s sind damit
+  # rund 10,4 mm/s; der volle Hub (94500 Counts = 656,25 mm) dauert etwa 63 s,
+  # was der beobachteten Fahrzeit entspricht.
+  max_speed: 1500
+  # Beschleunigen/Bremsen in Counts/s^2. Bewusst flach, damit der Lift sanft
+  # anfaehrt statt praktisch sofort auf Marschfahrt zu springen:
+  #   accel 300 -> 1500 Counts/s erst nach 5 s (Weg dabei rund 26 mm)
+  #   decel 500 -> Auslauf ueber 3 s, kuerzerer Bremsweg als der Anfahrweg
+  # Zum Vergleich: die vorherigen 2500 erreichten max_speed in 0,6 s.
+  accel: 300
+  decel: 500
+  # Kriechgeschwindigkeit auf dem letzten Stueck, damit das Ziel wirklich
+  # erreicht und nicht kurz davor "stehengelassen" wird.
+  approach_speed: 150
+  # --- PI-Regler auf die gemessene Encodergeschwindigkeit ---
+  # Konservative Startwerte, MUESSEN am realen Lift kalibriert werden:
+  # zuerst speed_kp erhoehen, bis die Fahrt zuegig folgt, dann speed_ki, bis
+  # die Geschwindigkeit lastunabhaengig (auf/ab) gleich bleibt.
+  speed_kp: 0.0006
+  speed_ki: 0.004
+  # Messfenster der Geschwindigkeit (Encoderquantisierung) und EMA-Filter.
+  speed_window: 20ms
+  speed_filter: 0.35
+  # Zeitgrenze einer geregelten Positionsfahrt. Der volle Hub betraegt 94500
+  # Counts (656,25 mm), bei 1500 Counts/s also etwa 63 s -- 90 s lassen
+  # Reserve fuer Rampen und Nachkorrektur.
+  timeout: 90s
+  # Zeitgrenze einer manuellen Pfeilfahrt: muss den gesamten Hub abdecken
+  # (94500 Counts / 656,25 mm, etwa 63 s). Gegen Anschlag/Blockade schuetzt
+  # weiterhin die Stall-Abschaltung.
+  manual_timeout: 90s
+  # --- Stromausfallsicherheit ---
+  # Position und Referenz liegen im NVS. Die Mechanik ist selbsthemmend
+  # (Getriebe auf Trapezgewinde), ohne Strom bleibt der Lift stehen -- der
+  # gespeicherte Stand ist daher nach dem Neustart weiter gueltig.
+  # Geschrieben wird NUR bei Fahrtbeginn, Fahrtende und beim Referenzieren,
+  # also zwei Flash-Schreibvorgaenge pro Fahrt. Kein periodisches Speichern:
+  # das wuerde Flash-Zyklen verbrauchen und beim NVS-Schreiben jedes Mal den
+  # Flash-Cache und damit kurz den 1-ms-Regeltask anhalten.
+  # Wird eine Fahrt durch Spannungsverlust unterbrochen, ist der gespeicherte
+  # Stand veraltet; der Lift startet dann bewusst unreferenziert.
+  persist_position: true
+
 # Eigener SPI-DMA-Treiber fuer den zweiten LED-Strip (interrupt-immun trotz W5500).
 external_components:
   - source:
       type: local
       path: components
-    components: [spi_clockless_led, serialized_rmt_led, fireplace_effect]
+    components: [spi_clockless_led, serialized_rmt_led, fireplace_effect, lift_motor, pcnt_quadrature]
 
 logger:
   level: INFO
@@ -97,6 +177,15 @@ api:
 ota:
   - platform: esphome
     password: !secret wohnzimmer_ota_password
+    # Sicherheitshalt vor dem Update: waehrend des OTA-Schreibens wird der
+    # Flash-Cache abgeschaltet. Code, der im Flash liegt, kann dann nicht
+    # ausgefuehrt werden -- auch der Regeltask auf Kern 1 nicht. Eine laufende
+    # PWM wuerde also weiter ausgegeben, ohne dass Regelung oder Watchdog
+    # eingreifen koennen. Deshalb hier zuerst geordnet stillsetzen.
+    on_begin:
+      - lambda: |-
+          id(lift)->stop();
+          ESP_LOGW("ota", "OTA startet -- Lift gestoppt und Antrieb abgeschaltet.");
 
 # Zeitquelle aus Home Assistant -> Tages-Energiezaehler (Reset um Mitternacht).
 time:
@@ -129,35 +218,13 @@ i2c:
   scan: true
   frequency: 50kHz
 
-# =============================================================================
-# MOCK-ZUSTAND (nur waehrend Mock-Phase; entfaellt beim Umbau auf living_room)
-# =============================================================================
 globals:
-  - id: mock_lift_position
-    type: float
-    restore_value: yes
-    initial_value: "35.0"
-  - id: mock_lift_target
-    type: float
-    restore_value: no
-    initial_value: "35.0"
-  - id: mock_lift_moving
-    type: bool
-    restore_value: no
-    initial_value: "false"
-  - id: mock_lift_homed
-    type: bool
-    restore_value: yes
-    initial_value: "true"
-  - id: mock_lift_fault
-    type: bool
-    restore_value: yes
-    initial_value: "false"
   # Aktuelles Luefter-PWM-Duty (0..1), von der Temperatur-Regelung gestellt.
   - id: fan_duty
     type: float
     restore_value: no
     initial_value: "0.35"
+
 
 # =============================================================================
 # LICHTER -- 2 Strips (wie Original-Hardware): Sideboard + Cabinet Glass Edge,
@@ -262,41 +329,34 @@ light:
 # =============================================================================
 
 # =============================================================================
-# TV-LIFT (Cover) -- derzeit MOCK (Positions-Simulation via Template).
-# Wird auf echten Motorbetrieb umgestellt, sobald Motor + Encoder (GPIO16/18)
-# + Endschalter mechanisch verbaut und verdrahtet sind. Name "TV Lift" behalten!
+# TV-LIFT -- Positionssteuerung ausschliesslich ueber LiftMotor.
+# Pfeile Hoch/Runter fahren immer manuell; Prozent-/Positionsziele sind erst
+# nach erfolgreicher manueller Referenzierung zulaessig.
 # =============================================================================
 cover:
   - platform: template
     id: tv_lift
     name: "TV Lift"
-    device_class: shade
+    # Bewusst OHNE device_class: als "shade" behandelt Home Assistant den Lift
+    # als Rollo. Die Cover-Domain kennt ohnehin nur die Zustaende geoeffnet und
+    # geschlossen -- eine sprechende Lageangabe liefert der Textsensor
+    # "TV Lift Lage" (Unten / Oben / Zwischenlage / Fahrtrichtung).
+    icon: "mdi:television-shimmer"
     has_position: true
     optimistic: false
-    lambda: |-
-      return id(mock_lift_position) / 100.0f;
+    assumed_state: false
     open_action:
-      - lambda: |-
-          if (!id(mock_lift_fault)) {
-            id(mock_lift_target) = 100.0f;
-            id(mock_lift_moving) = true;
-          }
+      - lambda: 'id(lift)->start_manual(1);'
     close_action:
-      - lambda: |-
-          if (!id(mock_lift_fault)) {
-            id(mock_lift_target) = 0.0f;
-            id(mock_lift_moving) = true;
-          }
-    stop_action:
-      - lambda: |-
-          id(mock_lift_target) = id(mock_lift_position);
-          id(mock_lift_moving) = false;
+      - lambda: 'id(lift)->start_manual(-1);'
     position_action:
       - lambda: |-
-          if (!id(mock_lift_fault)) {
-            id(mock_lift_target) = pos * 100.0f;
-            id(mock_lift_moving) = true;
-          }
+          const int64_t span = id(lift)->max_position() - id(lift)->min_position();
+          const int64_t target = id(lift)->min_position() +
+                                 (int64_t) llroundf(pos * (float) span);
+          id(lift)->goto_position(target);
+    stop_action:
+      - lambda: 'id(lift)->stop();'
 
 # =============================================================================
 # SENSOREN
@@ -307,7 +367,9 @@ cover:
 # =============================================================================
 sensor:
   # --- INA226 12V-Schiene (ECHT) ---
+  # Die Hub-ID bleibt fuer gezielte Diagnose-Updates verfuegbar.
   - platform: ina226
+    id: ina_12v
     address: ${ina226_12v_address}
     shunt_resistance: ${ina226_12v_shunt}
     max_current: ${ina226_12v_max_current}
@@ -463,15 +525,73 @@ sensor:
       name: "Loop Time"
       entity_category: diagnostic
 
-  # --- Lift-Diagnose (Mock) ---
+  # --- Motor-Encoder (PCNT Hardware-Zaehler) ---
+  # GPIO16/GPIO18 bleiben reine Eingaenge ohne interne Pull-Widerstaende.
+  # x4 und 10-us-Filter bleiben aktiv; invert_direction wird erst nach einem
+  # beaufsichtigten Richtungstest bei Bedarf geaendert.
+  - platform: pcnt_quadrature
+    name: "Motor Encoder Position"
+    id: motor_encoder
+    entity_category: diagnostic
+    pin_a:
+      number: ${pin_encoder_a}
+      mode:
+        input: true
+    pin_b:
+      number: ${pin_encoder_b}
+      mode:
+        input: true
+    resolution: 4
+    internal_filter: 10us
+    # Messung am Aufbau: ohne Invertierung zaehlte Aufwaerts negativ. Gewuenscht
+    # ist positiv = hoch/offen, 0 = unten/geschlossen -- daher invertiert.
+    invert_direction: true
+    update_interval: 250ms
+
+  # --- Lift-Position (echt, aus PCNT-Encoder) ---
+  # Die Umrechnung Counts -> mm folgt dem Uebersetzungsverhaeltnis aus
+  # config/hardware.yaml (Encoder-Counts je Motorumdrehung, Getriebe,
+  # Gewindesteigung) und NICHT einer geschaetzten Hublaenge:
+  #   12 Counts/Motorumdrehung x 48 = 576 Counts/Spindelumdrehung
+  #   576 / 4 mm Steigung           = 144 Counts/mm  (1 Count = 6,94 um)
   - platform: template
     name: "TV Lift Position Pulses"
     id: tv_lift_position_pulses
     entity_category: diagnostic
     state_class: measurement
     accuracy_decimals: 0
-    update_interval: 1s
-    lambda: 'return id(mock_lift_position) / 100.0f * 940.0f;'
+    update_interval: 500ms
+    lambda: 'return (float) id(motor_encoder).get_position();'
+  - platform: template
+    name: "TV Lift Position mm"
+    id: tv_lift_position_mm
+    unit_of_measurement: "mm"
+    icon: "mdi:ruler"
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 500ms
+    lambda: |-
+      // Counts/mm aus dem Antriebsstrang ableiten, damit nur noch Getriebe und
+      // Steigung gepflegt werden muessen.
+      constexpr float counts_per_mm =
+          ((float) ${lift_encoder_counts_per_motor_rev} * (float) ${lift_gear_ratio}) /
+          (float) ${lift_screw_lead_mm};
+      return (float) id(motor_encoder).get_position() / counts_per_mm;
+  # --- Lift-Geschwindigkeit (Diagnose der Geschwindigkeitsregelung) ---
+  # Gefilterte Encodergeschwindigkeit in Counts/s, vorzeichenbehaftet
+  # (positiv = Aufwaerts/Oeffnen). 288 Counts/mm -> 288 Counts/s = 1 mm/s.
+  # Referenz fuer die Kalibrierung: 100 Prozent Duty ~ 1400 Counts/s.
+  - platform: template
+    name: "Lift Geschwindigkeit"
+    id: lift_speed_counts
+    unit_of_measurement: "counts/s"
+    icon: "mdi:speedometer"
+    entity_category: diagnostic
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 500ms
+    lambda: 'return id(lift)->speed();'
+
   - platform: template
     name: "TV Lift Position Percent"
     id: tv_lift_position_percent
@@ -479,9 +599,18 @@ sensor:
     state_class: measurement
     accuracy_decimals: 0
     update_interval: 1s
-    lambda: 'return id(mock_lift_position);'
+    lambda: |-
+      if (!id(lift)->homed()) return NAN;
+      const float pos = (float) id(lift)->position();
+      const float span = (float) (id(lift)->max_position() - id(lift)->min_position());
+      if (span <= 0.0f) return NAN;
+      float pct = (pos - (float) id(lift)->min_position()) / span * 100.0f;
+      if (pct < 0.0f) pct = 0.0f;
+      if (pct > 100.0f) pct = 100.0f;
+      return pct;
 
 binary_sensor:
+
   # --- Ueberstrom-Warnung je Schiene (Schwellen in config/hardware.yaml) ---
   - platform: template
     name: "Rail 12V Overcurrent"
@@ -501,15 +630,7 @@ binary_sensor:
       const float c = id(rail_5v_current).state;
       if (isnan(c)) return false;
       return c > ${ina226_5v_warn_current}f;
-  - platform: template
-    name: "TV Lift Homed"
-    id: tv_lift_homed
-    lambda: 'return id(mock_lift_homed);'
-  - platform: template
-    name: "TV Lift Fault"
-    id: tv_lift_fault
-    device_class: problem
-    lambda: 'return id(mock_lift_fault);'
+
   # API-Verbindungsstatus (Home Assistant erreichbar?)
   - platform: status
     name: "API Connected"
@@ -517,6 +638,43 @@ binary_sensor:
     entity_category: diagnostic
 
 text_sensor:
+  # Sprechende Lageangabe. Ersetzt in der Oberflaeche das nichtssagende
+  # "geoeffnet/geschlossen" der Cover-Domain.
+  - platform: template
+    name: "TV Lift Lage"
+    id: tv_lift_position_text
+    icon: "mdi:arrow-up-down"
+    update_interval: 1s
+    lambda: |-
+      if (!id(lift)->homed())
+        return {"Nicht referenziert"};
+
+      const int direction = id(lift)->motion_direction();
+      if (id(lift)->busy() && direction > 0)
+        return {"Faehrt hoch"};
+      if (id(lift)->busy() && direction < 0)
+        return {"Faehrt runter"};
+
+      const float pos = (float) id(lift)->position();
+      const float top = (float) id(lift)->max_position();
+      if (top <= 0.0f)
+        return {"Unbekannt"};
+      // Endlagenfenster rund 2 mm (etwa 250 Counts bei 144 Counts/mm).
+      if (pos <= 250.0f)
+        return {"Unten"};
+      if (pos >= top - 250.0f)
+        return {"Oben"};
+
+      char buffer[32];
+      snprintf(buffer, sizeof(buffer), "Zwischenlage %.0f %%", 100.0f * pos / top);
+      return {buffer};
+
+  - platform: template
+    name: "Lift Zustand"
+    id: lift_state
+    entity_category: diagnostic
+    update_interval: 200ms
+    lambda: 'return {id(lift)->state_name()};'
   - platform: ethernet_info
     ip_address:
       name: "IP Address"
@@ -526,60 +684,82 @@ text_sensor:
       entity_category: diagnostic
 
 button:
-  - platform: template
-    name: "TV Lift Reference"
-    id: tv_lift_reference
-    on_press:
-      - lambda: |-
-          id(mock_lift_position) = 0.0f;
-          id(mock_lift_target) = 0.0f;
-          id(mock_lift_homed) = true;
-          id(mock_lift_fault) = false;
-          id(mock_lift_moving) = false;
-  - platform: template
-    name: "TV Lift Clear Fault"
-    id: tv_lift_clear_fault
-    on_press:
-      - lambda: |-
-          id(mock_lift_fault) = false;
   # Neustart per HA (u. a. um den 1-Wire-Bus neu zu scannen).
   - platform: restart
     name: "Controller Restart"
     id: controller_restart
-  # LED-Verdrahtungs-Selbsttest (siehe Skript led_wiring_test).
-  - platform: template
-    name: "LED Wiring Test"
-    id: led_wiring_test_button
-    on_press:
-      - script.execute: led_wiring_test
+
 
 switch:
-  # Bring-up-Test fuer den Motor (IBT-2): solange EIN, faehrt der Motor im
-  # 5-s-Takt abwechselnd links/rechts mit 50 % Duty. Standard AUS.
-  # ACHTUNG SICHERHEIT: kein Endschalter-Schutz -> nur bei freilaufender
-  # Mechanik oder unter Aufsicht mit griffbereiter Stromtrennung einschalten!
+  # --- Referenz: EIN Schalter fuer setzen, anzeigen und verwerfen ---
+  # Der Schalterzustand IST der Referenzstatus (kein separater Binaersensor).
+  #   EINSCHALTEN = "untere Endlage erreicht": stoppt den Antrieb, wartet den
+  #                 Stillstand ab und setzt die Position auf 0. Danach sind die
+  #                 Softlimits 0..${lift_top_position_pulses} aktiv und der
+  #                 Positions-Slider ist freigegeben.
+  #   AUSSCHALTEN = Referenz verwerfen, z. B. nach Handverstellung im
+  #                 spannungslosen Zustand. Positionsfahrten sind dann gesperrt,
+  #                 die manuellen Pfeile bleiben nutzbar.
+  # Die Referenz liegt im NVS und uebersteht einen Stromausfall.
   - platform: template
-    name: "Motor Test Mode"
-    id: motor_test_mode
-    optimistic: true
-    restore_mode: ALWAYS_OFF
+    name: "Lift Referenz"
+    id: lift_reference_switch
+    icon: "mdi:crosshairs-gps"
+    # Diagnose-Kategorie: im Alltag wird der Lift ueber das Cover bedient, der
+    # Referenzschalter ist ein Einrichtungs-/Servicebedienelement.
+    entity_category: diagnostic
+    lambda: 'return id(lift)->homed();'
+    turn_on_action:
+      - script.execute: lift_set_reference_here
     turn_off_action:
-      - lambda: |-
-          id(out_motor_enable).turn_off();
-          id(out_motor_rpwm).set_level(0.0f);
-          id(out_motor_lpwm).set_level(0.0f);
+      - lambda: 'id(lift)->clear_reference();'
 
 select:
   - platform: template
     name: "Livingroom Light Scene"
     id: livingroom_light_scene
     optimistic: true
-    options: [Manual, Museum, Fireplace, Fireplace Palette, Fireworks]
+    # Echte Raum-Szenen statt Effektnamen einzelner Strips. Die Kalibrierbilder
+    # ("Fireplace Palette (Kalibrierung)") sind bewusst NICHT enthalten, sie
+    # bleiben je Licht direkt waehlbar.
+    options:
+      - Manual
+      - Aus
+      - Kaminfeuer
+      - Vitrine
+      - Kaminfeuer + Vitrine
+      - Cinema
+      - Feuerwerk
     initial_option: Manual
+    # Ueberlebt Stromausfall und Neustart; initial_option gilt nur beim
+    # allerersten Start bzw. nach einem Loeschen des NVS.
+    restore_value: true
     on_value:
       - script.execute: apply_light_scene
 
 number:
+  # Marschgeschwindigkeit zur Laufzeit. Fuer die Umdrehungsmessung klein
+  # einstellen (z. B. 150 Counts/s), damit sich die Welle langsam dreht und
+  # genau eine Umdrehung getroffen werden kann. Danach wieder hochsetzen.
+  - platform: template
+    name: "Lift Max Geschwindigkeit"
+    id: lift_max_speed_number
+    entity_category: config
+    optimistic: true
+    min_value: 50
+    max_value: 2400
+    step: 50
+    initial_value: 1500
+    # Eingestellte Marschgeschwindigkeit bleibt ueber Stromausfall erhalten und
+    # wird beim Start per on_value erneut an den Regler uebergeben.
+    restore_value: true
+    unit_of_measurement: "counts/s"
+    mode: box
+    on_value:
+      - lambda: |-
+          id(lift)->set_max_speed(x);
+          ESP_LOGI("lift", "Marschgeschwindigkeit auf %.0f Counts/s gesetzt", x);
+
   - platform: template
     name: "Livingroom Effect Intensity"
     id: livingroom_effect_intensity
@@ -588,6 +768,8 @@ number:
     max_value: 100
     step: 1
     initial_value: 60
+    # Zuletzt eingestellte Intensitaet bleibt nach Stromausfall erhalten.
+    restore_value: true
     on_value:
       - script.execute: apply_light_scene
   # Hinweis: Ein frueherer "Livingroom Effect Speed"-Regler wurde entfernt. Der
@@ -597,13 +779,33 @@ number:
 
 
 # =============================================================================
-# SZENEN-ENGINE (Mock)
+# SZENEN-ENGINE
 # Setzt Farbe/Weiss/Helligkeit + ESPHome-Effekt aller drei Lichter je nach
 # ausgewaehlter "Livingroom Light Scene". Intensity steuert die Helligkeit.
 # TODO HARDWARE (LED): Bei adressierbaren Strips hier zusaetzlich Speed und
 # per-Pixel-Effekte nutzen (addressable_lambda).
 # =============================================================================
 script:
+  # ---------------------------------------------------------------------------
+  # REFERENZIEREN mit einer Taste.
+  # Der Antrieb wird zuerst sicher stillgesetzt, danach wird der Stillstand
+  # abgewartet (der Regler verlangt eine ruhige Encoderposition, damit kein
+  # Auslauf mitgenommen wird) und erst dann die Position auf 0 gesetzt.
+  # ---------------------------------------------------------------------------
+  - id: lift_set_reference_here
+    mode: single
+    then:
+      - lambda: 'id(lift)->stop();'
+      # Auslauf und Stillstandspruefung des Reglers abwarten (>= 250 ms).
+      - delay: 800ms
+      - lambda: |-
+          if (id(lift)->set_reference(0)) {
+            ESP_LOGI("lift", "Referenz gesetzt: untere Endlage = 0, Softlimits 0..%lld aktiv.",
+                     (long long) id(lift)->max_position());
+          } else {
+            ESP_LOGE("lift", "Referenz NICHT gesetzt -- Meldung oben pruefen (Lift muss stehen).");
+          }
+
   # LED-Verdrahtungs-Selbsttest. Ablauf (beide Strips):
   #  1) Nur Sideboard rot / nur Glass Edge rot -> Pin-Zuordnung, nicht vertauscht
   #  2) R -> G -> B -> W auf beiden -> Farbreihenfolge (GRB) + RGBW-Weisskanal
@@ -728,41 +930,86 @@ script:
           const auto s = id(livingroom_light_scene).current_option();
           const float bri = id(livingroom_effect_intensity).state / 100.0f;
           if (s == "Manual") {
+            // Kein Eingriff: die Lichter behalten ihren Einzelzustand.
             clear_eff(id(light_sideboard_ambient));
             clear_eff(id(light_cabinet_glass_edge));
-          } else if (s == "Museum") {
-            // Cabinet: Vitrinen-Look (Effekt steuert Farben pro Pixel); Sideboard aus.
-            // Helligkeit folgt jetzt dem Intensity-Regler (bri) statt fix 100 %.
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Cabinet Museum");
+          } else if (s == "Aus") {
             id(light_sideboard_ambient)->turn_off().perform();
-          } else if (s == "Fireplace") {
+            id(light_cabinet_glass_edge)->turn_off().perform();
+          } else if (s == "Kaminfeuer") {
             // Beide Strips mit dem Raw-Kaminfeuer; HA-Slider (bri) steuert die
             // Helligkeit ueber current_values im Effekt selbst.
             set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
             set_light(id(light_cabinet_glass_edge), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
-          } else if (s == "Fireplace Palette") {
-            set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace Palette");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace Palette");
-          } else if (s == "Fireworks") {
+          } else if (s == "Vitrine") {
+            // Nur das Cabinet zeigt den Vitrinen-Look, das Sideboard bleibt aus.
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            id(light_sideboard_ambient)->turn_off().perform();
+          } else if (s == "Kaminfeuer + Vitrine") {
+            set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+          } else if (s == "Cinema") {
+            // Filmbetrieb: am Sideboard bewusst KEIN Flackern, sondern das
+            // statische Parabelprofil -- der Strip sitzt direkt unter dem
+            // Bildschirm. Das Cabinet bleibt auf dem ruhigen Museum-Look.
+            set_light(id(light_sideboard_ambient), 1.0f, 0.35f, 0.0f, 1.0f, bri, "Cinema");
+            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+          } else if (s == "Feuerwerk") {
             set_light(id(light_sideboard_ambient), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
             set_light(id(light_cabinet_glass_edge), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
           }
 
-# =============================================================================
-# MOCK-BEWEGUNG: Lift-Position laeuft in Richtung Ziel (entfaellt beim Umbau).
-# =============================================================================
 interval:
+  # Cover-Status aktualisieren. Publiziert wird nur bei echter Aenderung (plus
+  # ein Lebenszeichen alle 5 s), nicht 5x pro Sekunde -- das sparte sonst
+  # weder API-Bandbreite noch beruhigte es die Oberflaeche.
   - interval: 200ms
     then:
       - lambda: |-
-          if (id(mock_lift_moving)) {
-            float delta = id(mock_lift_target) - id(mock_lift_position);
-            if (fabsf(delta) < 0.8f) {
-              id(mock_lift_position) = id(mock_lift_target);
-              id(mock_lift_moving) = false;
+          static float last_position = -1.0f;
+          static cover::CoverOperation last_operation = cover::COVER_OPERATION_IDLE;
+          static uint32_t last_publish_ms = 0;
+          const uint8_t lift_state = id(lift)->state();
+          if ((lift_state == esphome::lift_motor::LIFT_MOVING ||
+               lift_state == esphome::lift_motor::LIFT_MANUAL) && id(lift)->busy()) {
+            const int direction = id(lift)->motion_direction();
+            if (direction > 0) {
+              id(tv_lift).current_operation = cover::COVER_OPERATION_OPENING;
+            } else if (direction < 0) {
+              id(tv_lift).current_operation = cover::COVER_OPERATION_CLOSING;
             } else {
-              id(mock_lift_position) += (delta > 0.0f ? 0.8f : -0.8f);
+              id(tv_lift).current_operation = cover::COVER_OPERATION_IDLE;
             }
+          } else {
+            id(tv_lift).current_operation = cover::COVER_OPERATION_IDLE;
+          }
+
+          if (id(lift)->homed()) {
+            const float min_pos = (float) id(lift)->min_position();
+            const float span = (float) (id(lift)->max_position() - id(lift)->min_position());
+            if (span > 0.0f) {
+              float position = ((float) id(lift)->position() - min_pos) / span;
+              if (position < 0.0f) position = 0.0f;
+              if (position > 1.0f) position = 1.0f;
+              id(tv_lift).position = position;
+            }
+          } else {
+            // Home Assistant deaktiviert die gesamte Cover-Steuerung bei NAN.
+            // 50 % ist daher nur ein neutraler UI-Platzhalter; der separate
+            // Prozent-Sensor bleibt bis zur Referenzierung bewusst unbekannt.
+            id(tv_lift).position = 0.5f;
+          }
+
+          // Nur bei Aenderung senden; zusaetzlich alle 5 s ein Lebenszeichen,
+          // damit die Oberflaeche nach einem Neuverbinden sicher stimmt.
+          const uint32_t now = millis();
+          const bool position_changed = fabsf(id(tv_lift).position - last_position) >= 0.005f;
+          const bool operation_changed = id(tv_lift).current_operation != last_operation;
+          if (position_changed || operation_changed || (now - last_publish_ms) >= 5000) {
+            last_position = id(tv_lift).position;
+            last_operation = id(tv_lift).current_operation;
+            last_publish_ms = now;
+            id(tv_lift).publish_state(false);
           }
 
   # Luefter-Temperatur-Regelung (jede Sekunde), lineare Kennlinie:
@@ -803,34 +1050,3 @@ interval:
           }
           id(fan_duty) = duty;
           id(out_fan_pwm).set_level(duty);
-
-  # Motor-Bring-up-Test: nur aktiv, solange "Motor Test Mode" EIN ist.
-  # 5 s links, dann 5 s rechts, 50 % Duty. Vor jedem Umschalten die Gegenseite
-  # zuerst auf 0 (verhindert BTS7960-Shoot-Through der Halbbruecken).
-  - interval: 5s
-    then:
-      - if:
-          condition:
-            switch.is_on: motor_test_mode
-          then:
-            # Definierte Totzeit gegen BTS7960-Shoot-Through: erst BEIDE
-            # Halbbruecken auf 0 und Enable weg, kurz warten (Gate-Ladungen
-            # abbauen), dann neue Richtung setzen und erst danach Enable an.
-            - output.set_level:
-                id: out_motor_rpwm
-                level: 0%
-            - output.set_level:
-                id: out_motor_lpwm
-                level: 0%
-            - output.turn_off: out_motor_enable
-            - delay: 50ms
-            - lambda: |-
-                static bool right = false;
-                right = !right;
-                if (right) {
-                  id(out_motor_rpwm).set_level(0.5f);
-                } else {
-                  id(out_motor_lpwm).set_level(0.5f);
-                }
-            - output.turn_on: out_motor_enable
-

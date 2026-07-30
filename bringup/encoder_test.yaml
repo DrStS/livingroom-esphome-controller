@@ -1,0 +1,175 @@
+substitutions:
+  pin_encoder_a: GPIO16
+  pin_encoder_b: GPIO18
+  pin_motor_rpwm: GPIO40
+  pin_motor_lpwm: GPIO41
+  pin_motor_ren: GPIO39
+
+esphome:
+  name: wohnzimmer-controller
+  friendly_name: "Wohnzimmer Controller"
+  on_boot:
+    priority: -100
+    then:
+      # Sicherheitszustand: Nach jedem Boot bleibt der Motor aus. Eine Fahrt
+      # darf ausschliesslich bewusst ueber den zeitbegrenzten Testbutton starten.
+      - output.set_level:
+          id: out_motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: out_motor_lpwm
+          level: 0%
+      - output.turn_off: out_motor_enable
+      - logger.log: "Encoder-Test bereit; Motor bleibt nach Boot AUS."
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+logger:
+  level: DEBUG
+
+api:
+  encryption:
+    key: !secret wohnzimmer_api_key
+
+ota:
+  - platform: esphome
+    password: !secret wohnzimmer_ota_password
+
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+output:
+  - platform: ledc
+    pin: ${pin_motor_rpwm}
+    id: out_motor_rpwm
+    frequency: 20000 Hz
+  - platform: ledc
+    pin: ${pin_motor_lpwm}
+    id: out_motor_lpwm
+    frequency: 20000 Hz
+  - platform: gpio
+    pin: ${pin_motor_ren}
+    id: out_motor_enable
+
+sensor:
+  - platform: rotary_encoder
+    name: "Motor Encoder Position"
+    id: motor_encoder_re
+    pin_a:
+      number: ${pin_encoder_a}
+      mode:
+        input: true
+        pullup: true
+    pin_b:
+      number: ${pin_encoder_b}
+      mode:
+        input: true
+        pullup: true
+    resolution: 1
+    restore_mode: ALWAYS_ZERO
+    filters:
+      - lambda: |-
+          static float last = 0;
+          if (x != last) {
+            ESP_LOGI("enc", "Position: %.0f", x);
+            last = x;
+          }
+          return x;
+
+button:
+  - platform: template
+    id: rotary_test_up_button
+    name: "Encoder Rohpegel Aufwaerts 30 Prozent 2 Sekunden"
+    on_press:
+      - script.execute: encoder_raw_test
+
+  - platform: template
+    name: "Rotary Test Motor Stop"
+    on_press:
+      - script.stop: encoder_raw_test
+      - output.set_level:
+          id: out_motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: out_motor_lpwm
+          level: 0%
+      - output.turn_off: out_motor_enable
+
+script:
+  - id: encoder_raw_test
+    mode: single
+    then:
+      - output.set_level:
+          id: out_motor_rpwm
+          level: 0%
+      - output.set_level:
+          id: out_motor_lpwm
+          level: 0%
+      - output.turn_off: out_motor_enable
+      - delay: 200ms
+      - logger.log: "Rohpegel-Test START: LPWM 30 Prozent, Zähler wird NICHT genullt"
+      - output.set_level:
+          id: out_motor_lpwm
+          level: 30%
+      - output.turn_on: out_motor_enable
+      - delay: 200ms
+      - lambda: |-
+          uint32_t edges_a = 0, edges_b = 0, high_a = 0, high_b = 0, samples = 0;
+          int last_a = gpio_get_level(GPIO_NUM_16);
+          int last_b = gpio_get_level(GPIO_NUM_18);
+          const uint32_t started = millis();
+          while (millis() - started < 500) {
+            const int a = gpio_get_level(GPIO_NUM_16);
+            const int b = gpio_get_level(GPIO_NUM_18);
+            if (a != last_a) { edges_a++; last_a = a; }
+            if (b != last_b) { edges_b++; last_b = b; }
+            high_a += (uint32_t) a;
+            high_b += (uint32_t) b;
+            samples++;
+          }
+          ESP_LOGI("raw_test", "GPIO in 500 ms: A=%u Flanken (%.1f%% High), "
+                   "B=%u Flanken (%.1f%% High), Samples=%u",
+                   (unsigned) edges_a, samples ? 100.0f * high_a / samples : 0.0f,
+                   (unsigned) edges_b, samples ? 100.0f * high_b / samples : 0.0f,
+                   (unsigned) samples);
+      - delay: 1300ms
+      - output.set_level:
+          id: out_motor_lpwm
+          level: 0%
+      - output.turn_off: out_motor_enable
+      - delay: 100ms
+      - lambda: |-
+          ESP_LOGI("raw_test", "Rohpegel-Test ENDE: Rotary-State=%.0f",
+                   id(motor_encoder_re).state);
+
+interval:
+  # Passive Dauermessung: veraendert die Encoderpins nicht und funktioniert
+  # unabhaengig davon, wie der Motor gestartet wird.
+  - interval: 500ms
+    then:
+      - lambda: |-
+          uint32_t edges_a = 0, edges_b = 0, high_a = 0, high_b = 0, samples = 0;
+          int last_a = gpio_get_level(GPIO_NUM_16);
+          int last_b = gpio_get_level(GPIO_NUM_18);
+          const uint32_t started = millis();
+          while (millis() - started < 100) {
+            const int a = gpio_get_level(GPIO_NUM_16);
+            const int b = gpio_get_level(GPIO_NUM_18);
+            if (a != last_a) { edges_a++; last_a = a; }
+            if (b != last_b) { edges_b++; last_b = b; }
+            high_a += (uint32_t) a;
+            high_b += (uint32_t) b;
+            samples++;
+          }
+          ESP_LOGI("raw_live", "A=%u Flanken %.1f%% High | B=%u Flanken %.1f%% High",
+                   (unsigned) edges_a, samples ? 100.0f * high_a / samples : 0.0f,
+                   (unsigned) edges_b, samples ? 100.0f * high_b / samples : 0.0f);

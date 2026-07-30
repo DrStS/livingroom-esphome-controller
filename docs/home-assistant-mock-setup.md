@@ -1,75 +1,111 @@
-# Home Assistant Mock Setup
+# Home Assistant einrichten
 
-Der hardwarefreie Mock steckt jetzt direkt in `livingroom.yaml` (finaler Name
-`wohnzimmer-controller`). Er erzeugt exakt die endgültigen Entities, aber ohne
-echte Hardware. Home Assistant hängt den Gerätenamen als Präfix an die IDs an,
-daher tragen alle Controller-Entities das Präfix `wohnzimmer_controller_`.
+Historischer Dateiname: hier stand frueher das hardwarefreie Mock-Setup. Einen
+Mock gibt es nicht mehr, `livingroom_mock.yaml` ist entfallen. Es existiert nur
+noch die Produktionsfirmware `livingroom.yaml` (Geraetename
+`wohnzimmer-controller`) mit echter Hardware.
+
+Home Assistant haengt den Geraetenamen als Praefix an die IDs an, daher tragen
+alle Controller-Entities das Praefix `wohnzimmer_controller_`.
+
+## Firmware flashen
+
+1. `secrets.yaml` mit `wohnzimmer_api_key` und `wohnzimmer_ota_password` anlegen
+   (Vorlage: `secrets.example.yaml`).
+2. `livingroom.yaml` flashen:
+   - per USB: `esphome run livingroom.yaml --device COMx`
+   - per OTA: `esphome run livingroom.yaml --device 192.168.1.12`
+3. Geraet in Home Assistant unter Einstellungen → Geraete & Dienste → ESPHome
+   hinzufuegen (Host = IP, Port 6053, Key aus `secrets.yaml`).
+
+Beim OTA-Start stoppt die Firmware den Lift, bevor das Update beginnt.
 
 ## Was du in Home Assistant siehst
 
+Vollstaendige Liste mit Typen: `docs/entity-map.md`. Kurzfassung:
+
 ### Lift
 - `cover.wohnzimmer_controller_tv_lift`
+- `switch.wohnzimmer_controller_lift_referenz` (EIN = untere Endlage erreicht,
+  setzt Position 0; AUS verwirft die Referenz)
+- `sensor.wohnzimmer_controller_tv_lift_lage`
 - `sensor.wohnzimmer_controller_tv_lift_position_percent`
-- `sensor.wohnzimmer_controller_tv_lift_position_pulses`
-- `binary_sensor.wohnzimmer_controller_tv_lift_homed`
-- `binary_sensor.wohnzimmer_controller_tv_lift_fault`
-- `button.wohnzimmer_controller_tv_lift_reference`
-- `button.wohnzimmer_controller_tv_lift_clear_fault`
+- `sensor.wohnzimmer_controller_tv_lift_position_mm`
+- `sensor.wohnzimmer_controller_tv_lift_position_pulses` (Diagnose)
+- `sensor.wohnzimmer_controller_motor_encoder_position` (Diagnose)
+- `sensor.wohnzimmer_controller_lift_geschwindigkeit` (Diagnose)
+- `sensor.wohnzimmer_controller_lift_zustand` (Diagnose)
+- `number.wohnzimmer_controller_lift_max_geschwindigkeit` (Diagnose/Config)
 
 ### Licht
-- `light.wohnzimmer_controller_sideboard`
-- `light.wohnzimmer_controller_cabinet`
+- `light.wohnzimmer_controller_sideboard` (111 px)
+- `light.wohnzimmer_controller_cabinet` (102 px)
 - `select.wohnzimmer_controller_livingroom_light_scene`
 - `number.wohnzimmer_controller_livingroom_effect_intensity`
 
-### Rail Monitoring
-- `sensor.wohnzimmer_controller_rail_12v_voltage`
-- `sensor.wohnzimmer_controller_rail_12v_current`
-- `sensor.wohnzimmer_controller_rail_12v_power`
-- `sensor.wohnzimmer_controller_rail_5v_voltage`
-- `sensor.wohnzimmer_controller_rail_5v_current`
-- `sensor.wohnzimmer_controller_rail_5v_power`
+### Schienen
+- `sensor.wohnzimmer_controller_rail_12v_voltage` / `_current` / `_power` /
+  `_shunt_voltage`
+- `sensor.wohnzimmer_controller_rail_5v_voltage` / `_current` / `_power` /
+  `_shunt_voltage`
+- `sensor.wohnzimmer_controller_rail_12v_energy_daily`
+- `sensor.wohnzimmer_controller_rail_5v_energy_daily`
+- `sensor.wohnzimmer_controller_rail_total_power`
 
-### Klima / Lüfter
+### Klima / Luefter
 - `sensor.wohnzimmer_controller_av_receiver_temperature`
 - `sensor.wohnzimmer_controller_cabinet_temperature`
 - `sensor.wohnzimmer_controller_livingroom_temperature`
 - `sensor.wohnzimmer_controller_livingroom_humidity`
 - `sensor.wohnzimmer_controller_av_fan_rpm`
+- `sensor.wohnzimmer_controller_av_fan_duty` (Diagnose)
 
-## Firmware flashen
+### System
+- `sensor.wohnzimmer_controller_uptime`, `_esp_temperature`, `_heap_free`,
+  `_loop_time`, `_ip_address`, `_mac_address` (alle Diagnose)
+- `binary_sensor.wohnzimmer_controller_api_connected`
+- `binary_sensor.wohnzimmer_controller_rail_12v_overcurrent`
+- `binary_sensor.wohnzimmer_controller_rail_5v_overcurrent`
+- `button.wohnzimmer_controller_controller_restart`
 
-1. `secrets.yaml` mit `wohnzimmer_api_key` und `wohnzimmer_ota_password` anlegen.
-2. `livingroom.yaml` flashen:
-   - per USB: `esphome run livingroom.yaml --device COMx`
-   - per OTA: `esphome run livingroom.yaml --device <IP>`
-3. Danach das Gerät in Home Assistant unter Einstellungen → Geräte & Dienste →
-   ESPHome hinzufügen (Host = IP, Port 6053, Key aus `secrets.yaml`).
+## Szenen
 
-## Zentrale Konfiguration (YAML)
+Die Szenenauswahl laeuft komplett auf dem ESP, nicht in Home Assistant:
 
-Alles ist versioniert im Repo unter `home-assistant/`:
+| Szene | Sideboard | Cabinet |
+|---|---|---|
+| `Manual` | kein Eingriff | kein Eingriff |
+| `Aus` | aus | aus |
+| `Kaminfeuer` | Fireplace | Fireplace |
+| `Vitrine` | aus | Museum |
+| `Kaminfeuer + Vitrine` | Fireplace | Museum |
+| `Cinema` | Cinema | Museum |
+| `Feuerwerk` | Fireworks | Fireworks |
 
-- `configuration-snippet.yaml` → Inhalt in `/config/configuration.yaml` übernehmen
-  (aktiviert `packages` und das YAML-Dashboard).
-- `packages/livingroom_modes.yaml` → nach `/config/packages/` kopieren
-  (Modi, Skripte, Automationen).
-- `dashboards/livingroom.yaml` → nach `/config/dashboards/` kopieren
-  (Dashboard inkl. TV-Lift-Slider).
+Szene und Intensitaet werden per `restore_value` ueber Neustart und
+Spannungsausfall gehalten, die Einzelzustaende der Lichter per `restore_mode`.
 
-Nach dem Kopieren: Entwicklerwerkzeuge → YAML → „Alle YAML-Konfigurationen"
-neu laden bzw. einmal neu starten.
+## Dashboards
 
-## Zweck des Mocks
+Im Repo unter `home-assistant/`. Es gibt kein Package mehr, das kopiert werden
+muesste: das frueher hier beschriebene Modi-Package ist geloescht, der
+packages-Mechanismus wird nicht mehr gebraucht.
 
-Der Mock ist absichtlich hardwarefrei:
-- keine LED-Pins
-- kein Motor
-- keine INA226
-- keine Sensoren
-- kein Risiko
+- `dashboards/livingroom.yaml` → nach `/config/dashboards/` kopieren. Drei
+  Ansichten: Uebersicht (Bedienung und aktuelle Werte), Verlauf (Graphen),
+  Diagnose (Referenzieren, Reglerzustand, Systemwerte).
+- `lovelace-livingroom-dashboard.yaml` → kompakte Einzelansicht als Alternative,
+  wenn du keine drei Ansichten willst.
+- `configuration-snippet.yaml` → daraus nur den `lovelace:`-Block in
+  `/config/configuration.yaml` uebernehmen, der das YAML-Dashboard registriert.
+  Die `homeassistant: packages:`-Zeile in der Datei ist ein Ueberrest des
+  geloeschten Packages und wird nicht mehr gebraucht (offen: die Zeile ist noch
+  nicht aus dem Snippet entfernt).
 
-Damit kannst du Home Assistant, Dashboard, Entity-Namen, Szenen und Automationen
-einrichten, bevor die Hauptplatine fertig ist. Beim späteren Umbau auf echte
-Hardware (`TODO HARDWARE`-Marker in `livingroom.yaml`) bleiben die Entity-IDs
-identisch, deine HA-Konfiguration gilt also 1:1 weiter.
+Nach dem Kopieren: Entwicklerwerkzeuge → YAML neu laden bzw. einmal neu starten.
+
+## Entity-IDs pruefen
+
+Vor jeder Dashboard-Aenderung `python tools/dump_entity_ids.py` laufen lassen.
+Das Skript fragt die IDs direkt am Geraet ab, damit keine veralteten Entities in
+die Konfiguration zurueckwandern.

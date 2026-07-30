@@ -9,13 +9,160 @@ substitutions:
   led_glass_zone_edge_len: "25"
   led_glass_zone_spot_len: "9"
 
-  lift_top_position_pulses: "940"
+  # --- Cinema-Effekt (Sideboard) ---
+  # Statisches Parabelprofil ohne Animation: der Sideboard-Strip steht direkt
+  # unter dem Bildschirm, dort wuerde das Fireplace-Flackern (9-13 Hz) stoeren.
+  # Profil: g = (1 - d^2)^cinema_falloff, d = normierter Abstand zur Strichmitte.
+  # falloff 1.0 entspricht der Cabinet-Kante, 2.0 macht die Mitte relativ
+  # heller und die Ecken deutlich dunkler (bei halbem Abstand 56 statt 75 %).
+  cinema_falloff: "2.0"
+  # Mittenhelligkeit des Profils (0..1) vor Gamma und HA-Helligkeitsregler.
+  cinema_center_level: "1.0"
+  # Warmweiss mit leichtem Amberanteil. LOGISCHE Pre-Gamma-Werte (0..255),
+  # ESPHome rechnet Gamma 2.8 und die Slider-Helligkeit selbst.
+  cinema_red: "100"
+  cinema_green: "35"
+  cinema_white: "255"
+
+  # Gemessener Hub: von der unteren Endlage (Referenz 0) bis zur oberen Endlage
+  # wurden 94500 Encoder-Counts gezaehlt. Der alte Wert 940 war ein Platzhalter.
+  lift_top_position_pulses: "94500"
+  # --- Antriebsstrang: Umrechnung Counts <-> mm ---
+  # Die Umrechnung wird aus dem Uebersetzungsverhaeltnis abgeleitet, NICHT aus
+  # einer geschaetzten Hublaenge. Kette:
+  #   Counts/Motorumdrehung x Getriebeuntersetzung = Counts/Spindelumdrehung
+  #   Counts/Spindelumdrehung / Gewindesteigung    = Counts/mm
+  #
+  # Counts pro Motorumdrehung: MESSUNG. Der Hall-Encoder sitzt auf der
+  # Motorwelle und liefert 3 Signalzyklen je Kanal; mit x4-Quadratur sind das
+  # 12 Counts. Die Datenblattangabe "6 signals per rotation" bezeichnet die
+  # FLANKEN je Kanal, nicht die Zyklen -- bestaetigt durch Flankenvergleich:
+  # PCNT-Delta 496 gegen Flankensumme A+B 494.
+  lift_encoder_counts_per_motor_rev: "12"
+  # Getriebeuntersetzung Motor -> Spindel.
+  lift_gear_ratio: "48"
+  # Gewindesteigung der Hubspindel in mm pro Umdrehung (TR16x4).
+  lift_screw_lead_mm: "4"
+  #
+  # Daraus abgeleitet (nicht separat pflegen):
+  #   Counts/Spindelumdrehung = 12 x 48   = 576
+  #   Counts/mm               = 576 / 4   = 144
+  #   1 Count                             = 6,94 um
+  #   Hub 94500 Counts        = 94500/144 = 656,25 mm
+  # Hinweis: Weicht der real gemessene Hub deutlich von 656 mm ab, ist eine
+  # der drei Angaben oben falsch (Untersetzung oder Steigung) -- dann dort
+  # korrigieren, nicht die Umrechnung mit einem Erfahrungswert ueberschreiben.
   lift_slow_zone_pulses: "80"
   lift_ramp_ms: "800"
   lift_cruise_duty_up: "0.72"
   lift_cruise_duty_down: "0.62"
   lift_homing_duty: "0.30"
   motor_pwm_frequency: 20000 Hz
+  # Encoder-Richtungscheck: Duty und Fahrzeit je Richtung (bewusst zahm).
+  encoder_check_duty: "0.40"
+  encoder_check_run_ms: 1500ms
+  encoder_check_run_s: "1.5"   # gleiche Zeit als Sekundenwert fuer Lambdas
+  # Schritt-Test (Encoder-Genauigkeit): N Pulse vor, N Pulse zurueck, X Runden.
+  step_test_pulses: "20"
+  step_test_rounds: "5"
+  step_test_duty: "0.25"
+
+  # --- Positionsregelung (Closed Loop auf den PCNT-Encoder) ---
+  # Toleranz in Encoderschritten (x4).
+  pos_tolerance: "1"
+  # Duty-Fenster: min muss die Losbrechreibung ueberwinden, max begrenzt die
+  # Anfahrgeschwindigkeit und damit den Auslauf.
+  pos_duty_min: "0.14"
+  pos_duty_max: "0.35"
+  # Ab diesem Restfehler wird mit pos_duty_max gefahren, darunter linear runter.
+  pos_error_full: "12.0"
+
+  # --- Feinphase (Pulsbetrieb) ---
+  # Der Regelzyklus laeuft ueber den ESPHome-Scheduler und braucht real ~12 ms
+  # (Mainloop ist durch die beiden LED-Strips belastet). Kuerzer treiben geht
+  # nicht. Um trotzdem unter einen Schritt pro Anfahrt zu kommen, wird ab
+  # pos_fine_window nur noch jeder pos_pulse_period-te Zyklus getrieben, die
+  # anderen wird gebremst. Der Motor steht zwischen den Pulsen also wirklich
+  # still und legt pro Puls nur den Anlaufweg zurueck.
+  pos_fine_window: "5"
+  pos_duty_fine: "0.22"
+  pos_pulse_period: "3"
+  # Abwaerts (LPWM) laeuft der Antrieb wegen der Last weiter -- alle Messungen
+  # zeigten rund 3 % mehr Weg und deutlich mehr Auslauf. Deshalb wird die Duty
+  # in dieser Richtung skaliert.
+  pos_duty_down_scale: "0.85"
+  # Kurzschlussbremse: beide Halbbruecken low, Enable bleibt an. Das ist der
+  # eigentliche Genauigkeitsgewinn gegenueber freiem Auslauf.
+  pos_brake_ms: 200ms
+  # Not-Aus je Anfahrversuch. Ein Regelzyklus dauert real ~12 ms, 200 Zyklen
+  # sind also gut 2 s Fahrzeit. Im Pulsbetrieb wird nur jeder dritte Zyklus
+  # gefahren, daher etwas mehr Reserve als bei reiner Dauerfahrt.
+  pos_guard_max: "200"
+  # Wie oft nachkorrigiert wird, wenn der Auslauf ueber die Toleranz hinausgeht.
+  pos_max_passes: "5"
+  # Stall-Abschaltung: so viele Fahrzyklen ohne jede Encoderbewegung, dann aus.
+  # 40 Zyklen sind bei ~12 ms rund eine halbe Sekunde. Ohne Endschalter ist das
+  # der einzige Schutz davor, gegen einen Anschlag zu druecken.
+  pos_stall_max: "40"
+
+  # --- Losbrech-Scan: kleinste Duty, bei der der Antrieb anlaeuft ---
+  # Duty wird von duty_scan_start in Schritten von duty_scan_step erhoeht und
+  # je Stufe duty_scan_hold_cycles x 10 ms gehalten. Sobald der Encoder
+  # duty_scan_move_steps Schritte gezaehlt hat, wird sofort gebremst und die
+  # Stufe protokolliert. Bis duty_scan_max ohne Bewegung -> Abbruch mit Fehler.
+  # Bewusst konservatives Maximum: ohne Endschalter soll hier nicht mit voller
+  # Kraft gegen einen Anschlag gedrueckt werden.
+  duty_scan_start: "0.05"
+  duty_scan_step: "0.01"
+  duty_scan_max: "0.45"
+  duty_scan_hold_cycles: "25"
+  duty_scan_move_steps: "3"
+
+  # --- Freigangsprobe (lift_free_probe) ---
+  # Beantwortet in einem Lauf drei Fragen, die der feine Losbrech-Scan nicht
+  # klaeren kann, wenn der Antrieb ueberhaupt nicht anlaeuft:
+  #   1) Bewegt sich der Antrieb in irgendeiner Richtung?
+  #   2) Ab welcher Duty grob?
+  #   3) Fliesst Strom, obwohl der Encoder steht (= blockiert) oder fliesst
+  #      keiner (= Ansteuerung/Enable)?
+  # Grobe Stufen, kurze Haltezeit, Abbruch der Richtung sobald Weg da ist.
+  probe_duty_start: "0.10"
+  probe_duty_step: "0.05"
+  # Bis 55 Prozent lief der Antrieb in KEINER Richtung an, zog dabei aber
+  # 1,6 A (RPWM) bzw. 1,2 A (LPWM) bei 60 Prozent -- also Blockierstrom bei
+  # stehender Welle. Der frueher funktionierende Rampentest fuhr bis 100
+  # Prozent. Die Losbrechduty liegt demnach oberhalb von 55 Prozent, deshalb
+  # geht die Probe bis 90 Prozent.
+  probe_duty_max: "0.90"
+  # Haltezeit je Stufe in 20-ms-Haeppchen (30 x 20 ms = 600 ms). Lang genug,
+  # dass die parallel angestossene INA226-Messung (rund 280 ms) fertig wird und
+  # der Stromwert wirklich zu dieser Stufe gehoert.
+  probe_hold_chunks: "30"
+  probe_move_steps: "8"
+  # Notabschaltung: uebersteigt der Motorstrom diesen Wert, wird die Probe
+  # abgebrochen. Ohne Endschalter ist das die einzige Bremse gegen langes
+  # Druecken mit hoher Duty gegen einen Anschlag.
+  probe_current_limit: "4.0"
+
+  # --- Encoder-Handtest (motor_hand_turn_test) ---
+  # Der Antrieb bleibt komplett aus, die Welle wird von Hand gedreht. Damit ist
+  # der Encoderpfad unabhaengig von Motor und Mechanik geprueft -- der einzige
+  # Test, der "Encoder liefert nichts" und "Welle dreht sich nicht" wirklich
+  # trennt. Blockgroesse unter 1000 ms halten: der Regeltask auf Kern 1 wertet
+  # ein ueber 1 s ausbleibendes Lebenszeichen des Mainloops als Notfall.
+  hand_test_block_ms: "700"
+  hand_test_blocks: "22"
+
+  # --- Volllast-Test (motor_full_test) ---
+  # Fahrt mit voller Duty, kurz und in beide Richtungen (netto also kein Weg).
+  # Genau unter dieser Bedingung hat der Encoder frueher nachweislich gezaehlt
+  # (Rampentest bis 100 Prozent, rund 5000 Schritte je Zyklus).
+  full_test_duty: "1.0"
+  full_test_ms: "800"
+  # Not-Aus fuer die Regelschleife: max. Wartezyklen (a 2 ms) pro Fahrbefehl.
+  # Bewusst knapp (~0,4 s): solange der Zaehler Flanken verliert, faehrt der
+  # Motor bis zum Zielwert deutlich weiter als beabsichtigt.
+  step_test_guard_max: "200"
 
   # Adressen vertauscht ggue. Erwartung: Modul an 0x41 haengt an der 12V-Schiene,
   # Modul an 0x40 an der 5V-Schiene (per Log-Messung bestaetigt).

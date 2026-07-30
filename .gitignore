@@ -41,6 +41,14 @@ CMakeFiles/
 CMakeCache.txt
 compile_commands.json
 
+# Wegwerf-Ausgaben von Build-, OTA- und Diagnoselaeufen
+# (entstehen z. B. durch "esphome compile ... > _build_x.txt")
+_*.txt
+run*.txt
+*_stdout.txt
+*Err.txt
+*err.txt
+
 # Editors / OS
 .vscode/*
 !.vscode/extensions.json
