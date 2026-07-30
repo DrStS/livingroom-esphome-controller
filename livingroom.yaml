@@ -155,6 +155,21 @@ lift_motor:
   # Flash-Cache und damit kurz den 1-ms-Regeltask anhalten.
   # Wird eine Fahrt durch Spannungsverlust unterbrochen, ist der gespeicherte
   # Stand veraltet; der Lift startet dann bewusst unreferenziert.
+  # Position und Referenz ueberleben Stromausfall und OTA.
+  #
+  # VORGESCHICHTE, damit das nicht noch einmal passiert: Die Wiederherstellung
+  # stand ursprünglich in LiftMotor::setup() und hat dort direkt
+  # encoder_->set_position() aufgerufen -- ein Eingriff in eine fremde
+  # Komponente mitten in der Startphase, der dort ein publish_state() mit
+  # Filterkette und Callbacks ausloest. Solange die gespeicherte Position 0 war,
+  # fiel das nicht auf. Beim ersten Start mit einem echten Wert (9448 Counts)
+  # kam die Firmware nicht mehr durch den Start, ESPHome ging dauerhaft in den
+  # Safe Mode (nur Netzwerk und OTA) und war nur per USB zu retten.
+  #
+  # Jetzt zweistufig: setup() liest den Datensatz nur, angewendet wird er im
+  # ersten loop()-Durchlauf, wenn alle Komponenten initialisiert sind. Bis dahin
+  # gilt der Lift als unreferenziert -- absolute Fahrten sind also gesperrt,
+  # manuelle Fahrt bleibt moeglich.
   persist_position: true
 
 # Eigener SPI-DMA-Treiber fuer den zweiten LED-Strip (interrupt-immun trotz W5500).

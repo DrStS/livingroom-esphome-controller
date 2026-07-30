@@ -200,6 +200,15 @@ class LiftMotor : public Component {
    * Schreibvorgaenge pro Fahrt.
    */
   void save_state_();
+  /** Uebernimmt die im NVS gefundene Position in den Encoder.
+   *
+   * Bewusst NICHT aus setup() aufgerufen, sondern beim ersten loop(): das
+   * Setzen der Encoderposition loest dort ein publish_state() mit Filterkette
+   * und Callbacks aus. Waehrend der Startphase ist das riskant -- genau daran
+   * ist die Firmware haengengeblieben, sobald erstmals eine Position ungleich 0
+   * gespeichert war. Im laufenden Betrieb ist derselbe Aufruf unkritisch.
+   */
+  void apply_restored_position_();
   bool target_in_limits_(int64_t target) const {
     return target >= this->min_position_ && target <= this->max_position_;
   }
@@ -285,6 +294,11 @@ class LiftMotor : public Component {
   bool persist_position_{true};
   ESPPreferenceObject pref_;
   bool pref_ready_{false};
+  /** Im NVS gefundene Position, die noch uebernommen werden muss. Gesetzt in
+   * setup(), angewendet im ersten loop(). Bis dahin gilt der Lift als
+   * unreferenziert, absolute Fahrten sind also gesperrt. */
+  int64_t restore_position_{0};
+  bool restore_pending_{false};
   int64_t last_saved_position_{0};
   bool last_saved_homed_{false};
   bool last_saved_moving_{false};

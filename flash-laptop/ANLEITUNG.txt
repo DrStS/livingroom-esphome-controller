@@ -1,0 +1,82 @@
+CONTROLLER PER USB RETTEN -- ohne Toolchain, nur mit Browser
+============================================================
+
+Funktioniert auf MacBook und Windows-Laptop. Du brauchst NICHTS zu installieren.
+
+WAS DU BRAUCHST
+---------------
+- Chrome oder Edge.  WICHTIG: Safari geht NICHT (kein WebSerial).
+- Ein USB-DATENKABEL zum ESP32-Board. Achtung: reine Ladekabel haben keine
+  Datenleitungen und funktionieren nicht. Wenn kein Port erscheint, ist meist
+  das Kabel die Ursache.
+- Die Datei  wohnzimmer-controller-REPARIERT.bin  (liegt neben dieser Anleitung).
+
+
+SCHRITT 1 -- Verbinden
+----------------------
+1. USB-Kabel vom Laptop an den ESP32 stecken.
+2. In Chrome oeffnen:   https://web.esphome.io
+3. Auf  CONNECT  klicken.
+4. Im Auswahlfenster den Port waehlen:
+     macOS:    /dev/cu.usbmodem...   oder  /dev/cu.usbserial...
+     Windows:  COM<Nummer>
+   Erscheint kein Port: anderes Kabel probieren, anderen USB-Port am Laptop.
+
+
+SCHRITT 2 -- Erst das Protokoll lesen  (BITTE ZUERST!)
+------------------------------------------------------
+1. Auf  LOGS  klicken.
+2. Den Controller kurz stromlos machen und wieder einschalten, damit ein
+   frischer Start protokolliert wird.
+3. Es laufen Textzeilen durch. Warte, bis nichts mehr Neues kommt
+   (etwa 30 Sekunden).
+4. Den Text markieren, kopieren und mir schicken.
+
+Warum zuerst: In diesen Zeilen steht im Klartext, WARUM der Controller nicht
+startet. Ohne das Protokoll flashen wir auf Verdacht. Es kostet eine halbe
+Minute und wir wissen es sicher.
+
+Falls gar kein Text erscheint oder nur unleserliche Zeichen: einfach weiter zu
+Schritt 3, das ist kein Beinbruch.
+
+
+SCHRITT 3 -- Firmware aufspielen
+--------------------------------
+1. Zurueck auf die Startseite, dann  INSTALL  klicken.
+   (Heisst je nach Version auch "Install" oder "Prepare for first use".)
+2. Die Datei  wohnzimmer-controller-REPARIERT.bin  auswaehlen.
+3. Bestaetigen und warten. Dauert etwa eine Minute.
+4. Nach dem Fertigmelden das USB-Kabel abziehen.
+
+
+SCHRITT 4 -- Fertig
+-------------------
+Der Controller sollte nach etwa 30 Sekunden wieder im Netzwerk sein
+(192.168.1.12) und in Home Assistant erscheinen.
+
+Danach musst du EINMAL neu referenzieren, weil diese Firmware die gespeicherte
+Position bewusst nicht mehr laedt:
+  1. Lift mit dem Pfeil nach unten auf die untere Endlage fahren.
+  2. In Home Assistant unter Diagnose den Schalter "Lift Referenz" einschalten.
+
+
+WAS IN DIESER FIRMWARE ANDERS IST
+---------------------------------
+Der Absturz kam beim Start, wenn eine gespeicherte Position ungleich 0 aus dem
+Flash geladen wurde. Genau dieses Laden ist hier abgeschaltet
+(persist_position: false). Alles andere ist unveraendert.
+
+Das ist eine Zwischenloesung: Der Lift laeuft wieder vollstaendig, verliert
+aber bei Stromausfall seine Referenz. Sobald die Ursache im Protokoll bestaetigt
+und behoben ist, wird die Persistenz wieder eingeschaltet.
+
+
+WENN ES NICHT KLAPPT
+--------------------
+Der ESP32 ist nicht kaputt zu flashen. Sein Bootloader sitzt fest im Chip und
+ist per USB immer erreichbar. Falls die Verbindung nicht zustande kommt:
+
+  BOOT-Taste am Board gedrueckt halten, kurz RESET/EN druecken, BOOT loslassen.
+  Danach in Chrome erneut CONNECT versuchen.
+
+Damit startet der Chip im Bootloader-Modus und nimmt in jedem Fall Firmware an.

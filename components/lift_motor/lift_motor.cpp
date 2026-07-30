@@ -135,6 +135,26 @@ void LiftMotor::setup() {
   // Die Mechanik ist selbsthemmend, ohne Strom bewegt sich der Lift nicht. Der
   // vor dem Ausfall gespeicherte Stand ist deshalb nach dem Neustart weiterhin
   // gueltig, solange niemand von Hand verstellt hat.
+  // WICHTIG -- WARUM DAS HIER NUR GELESEN UND NICHT ANGEWENDET WIRD:
+  //
+  // Frueher stand an dieser Stelle direkt encoder_->set_position(gespeicherter
+  // Wert). Das ist ein Eingriff in eine FREMDE Komponente mitten in der
+  // Startphase, und set_position() loest dort ausserdem ein publish_state()
+  // aus -- mit Filterkette und Callbacks, zu einem Zeitpunkt, an dem noch
+  // nicht alle Komponenten initialisiert sind.
+  //
+  // Folge am Geraet: Sobald erstmals eine Position ungleich 0 gespeichert war
+  // (9448 Counts nach einer Fahrt auf 10 Prozent), kam die Firmware nicht mehr
+  // durch den Start. ESPHome landete im Safe Mode -- also nur noch Netzwerk und
+  // OTA, keine API, keine Lichter, kein Lift. Und zwar dauerhaft, weil der
+  // Safe-Mode-Zaehler erst nach 60 s stabilem Betrieb zurueckgesetzt wird.
+  // Rettung war nur per USB moeglich.
+  //
+  // Deshalb jetzt zweistufig: hier wird ausschliesslich GELESEN und gemerkt,
+  // angewendet wird im ersten loop()-Durchlauf (apply_restored_position_()).
+  // Dann ist die gesamte Komponentenkette fertig und ein Publish ist harmlos.
+  // Die halbe Sekunde spaeter spielt keine Rolle -- der Antrieb ist bis zum
+  // ersten Fahrbefehl ohnehin gesperrt (motion_allowed_ = false).
   if (this->persist_position_) {
     this->pref_ = global_preferences->make_preference<LiftPersistedState>(fnv1_hash("lift_motor_state"));
     this->pref_ready_ = true;
@@ -155,11 +175,11 @@ void LiftMotor::setup() {
                       "Referenz verworfen -- bitte untere Endlage anfahren und neu referenzieren.",
                  (long long) saved.position);
       } else if (saved.homed && in_limits) {
-        this->encoder_->set_position(saved.position);
-        position = saved.position;
-        this->homed_.store(true, std::memory_order_relaxed);
-        ESP_LOGI(TAG, "Referenz aus NVS wiederhergestellt: Position %lld (selbsthemmende Mechanik). "
-                      "Nach Handverstellung ohne Strom den Schalter 'Lift Referenz' ausschalten.",
+        // Nur vormerken. Angewendet wird im ersten loop() -- siehe Erklaerung
+        // oben. Der Encoder wird hier absichtlich NICHT angefasst.
+        this->restore_position_ = saved.position;
+        this->restore_pending_ = true;
+        ESP_LOGI(TAG, "Referenz im NVS gefunden: Position %lld; wird nach dem Start uebernommen.",
                  (long long) saved.position);
       } else {
         ESP_LOGI(TAG, "NVS-Datensatz vorhanden, aber nicht referenziert oder ausserhalb der Grenzen");
@@ -212,6 +232,39 @@ bool LiftMotor::start_task() {
   ESP_LOGI(TAG, "Regeltask automatisch gestartet: Kern %d, Prioritaet %u, Takt %u ms", this->task_core_,
            (unsigned) this->task_priority_, (unsigned) this->period_ms_);
   return true;
+}
+
+void LiftMotor::apply_restored_position_() {
+  if (!this->restore_pending_)
+    return;
+  this->restore_pending_ = false;
+
+  const int64_t position = this->restore_position_;
+
+  // Sicherheitshalber nicht mitten in einer Fahrt umschreiben. Kann eigentlich
+  // nicht vorkommen (der Antrieb ist bis zum ersten Fahrbefehl gesperrt), aber
+  // ein Positionssprung unter laufendem Regler waere gefaehrlich.
+  if (this->busy()) {
+    ESP_LOGW(TAG, "Wiederherstellung uebersprungen: Fahrt bereits aktiv");
+    return;
+  }
+
+  this->encoder_->set_position(position);
+  this->pos_.store(position, std::memory_order_relaxed);
+  this->target_.store(position, std::memory_order_relaxed);
+  this->last_observed_pos_.store(position, std::memory_order_relaxed);
+  this->last_encoder_change_ms_.store(millis(), std::memory_order_relaxed);
+  this->speed_ref_pos_ = position;
+  this->homed_.store(true, std::memory_order_release);
+
+  this->last_saved_position_ = position;
+  this->last_saved_homed_ = true;
+  this->last_saved_moving_ = false;
+  this->saved_valid_ = true;
+
+  ESP_LOGI(TAG, "Referenz aus NVS uebernommen: Position %lld (selbsthemmende Mechanik). "
+                "Nach Handverstellung ohne Strom den Schalter 'Lift Referenz' ausschalten.",
+           (long long) position);
 }
 
 void LiftMotor::save_state_() {
@@ -841,6 +894,11 @@ void LiftMotor::task_loop() {
 
 void LiftMotor::loop() {
   this->main_hb_.fetch_add(1, std::memory_order_relaxed);
+
+  // Nachgelagerte Wiederherstellung der Referenz aus dem NVS. Laeuft genau
+  // einmal und bewusst erst hier, nicht in setup() -- Begruendung dort.
+  if (this->restore_pending_)
+    this->apply_restored_position_();
 
   if (this->task_ == nullptr)
     return;
