@@ -33,26 +33,43 @@ namespace esphome::lift_motor {
 
 /** Im NVS gesicherter Referenzzustand.
  *
- * Zweck: nach einem Stromausfall soll der Lift seine Position kennen, ohne neu
- * referenzieren zu muessen. Das ist nur zulaessig, weil die Mechanik
- * selbsthemmend ist (Schneckengetriebe 48:1 auf Trapezgewinde TR16x4): ohne
- * Strom bleibt der Lift stehen, die Position aendert sich also nicht.
- * Bei Handverstellung im spannungslosen Zustand ist der Wert falsch -- dafuer
- * gibt es "Referenz verwerfen".
+ * Zweck: nach einem Stromausfall oder OTA soll der Lift seine Position kennen,
+ * ohne neu referenzieren zu muessen. Das ist zulaessig, weil die Mechanik
+ * selbsthemmend ist (Getriebe 48:1 auf Trapezgewinde): ohne Strom bleibt der
+ * Lift stehen, die Position aendert sich also nicht. Bei Handverstellung im
+ * spannungslosen Zustand ist der Wert falsch -- dafuer gibt es den Schalter
+ * "Lift Referenz" zum Verwerfen.
+ *
+ * AUFBAU BEWUSST MIT FESTER GROESSE UND VERSIONSFELD:
+ * ESPHome vergleicht beim Laden die Datensatzlaenge und verwirft alles, was
+ * nicht exakt passt. Ein Datensatz variabler Groesse verliert deshalb bei jeder
+ * Erweiterung die gespeicherte Referenz -- genau das ist beim Ergaenzen von
+ * "moving" passiert. Mit fester Groesse plus reserve[] bleibt die Laenge auch
+ * beim Hinzufuegen kuenftiger Felder gleich; die Version sagt, welche Felder
+ * gueltig sind. Kuenftige Erweiterungen kosten damit keine Referenz mehr:
+ * neues Feld aus reserve[] entnehmen und LIFT_PERSIST_VERSION erhoehen.
  */
 struct LiftPersistedState {
+  /** Kennung des Datensatztyps. Bleibt ueber alle Versionen KONSTANT. */
+  uint32_t magic;
+  /** Layoutversion. Aeltere Versionen werden gelesen, fehlende Felder bekommen
+   * ihren Standardwert. Neuere als die bekannte Version werden abgelehnt. */
+  uint16_t version;
+  /** Encoderstand in Counts (ab Version 1). */
   int64_t position;
+  /** War der Lift referenziert? (ab Version 1) */
   bool homed;
-  /** War beim letzten Schreiben eine Fahrt aktiv?
+  /** War beim letzten Schreiben eine Fahrt aktiv? (ab Version 1)
    *
-   * Wichtig fuer die Stromausfallsicherheit: waehrend der Fahrt kann der
-   * gespeicherte Stand bis zu einem Speicherintervall alt sein. Faellt genau
-   * dann die Spannung aus, ist die Position unsicher. Ist dieses Flag beim
-   * Start gesetzt, wird die Referenz daher bewusst verworfen statt eine
-   * moeglicherweise falsche Position zu uebernehmen.
+   * Waehrend der Fahrt wird nicht gespeichert, der Eintrag stammt dann vom
+   * Fahrtbeginn. Ist dieses Flag beim Start gesetzt, wurde die Fahrt
+   * unterbrochen und der Stand ist veraltet -- die Referenz wird dann bewusst
+   * verworfen statt eine falsche Position zu uebernehmen.
    */
   bool moving;
-  uint32_t magic;
+  /** Platz fuer kuenftige Felder, damit die Datensatzgroesse stabil bleibt.
+   * Wird beim Schreiben immer genullt. */
+  uint8_t reserved[16];
 } __attribute__((packed));
 
 enum LiftState : uint8_t {

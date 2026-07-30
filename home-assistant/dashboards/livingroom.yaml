@@ -46,17 +46,15 @@ views:
           - entity: sensor.wohnzimmer_controller_tv_lift_position_mm
             name: Position (mm)
 
-      - type: gauge
+      # Bewusst KEINE Gauge-Karte: solange der Lift nicht referenziert ist, ist
+      # der Prozentwert unbekannt, und eine Gauge quittiert das mit
+      # "Entitaet ist nicht-numerisch". Tiles zeigen "Unbekannt" sauber an.
+      - type: tile
+        entity: sensor.wohnzimmer_controller_tv_lift_lage
+        name: Lift Lage
+      - type: tile
         entity: sensor.wohnzimmer_controller_tv_lift_position_percent
         name: Lift Position
-        unit: "%"
-        min: 0
-        max: 100
-        needle: true
-        severity:
-          green: 0
-          yellow: 90
-          red: 98
 
       # Szenen: Kaminfeuer flackert bewusst. Cinema laesst das Sideboard
       # ruhig (statisches Parabelprofil), weil es direkt unter dem Bildschirm

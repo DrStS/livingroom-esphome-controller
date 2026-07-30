@@ -12,9 +12,18 @@ static const char *const TAG = "lift_motor";
 static constexpr uint32_t REFERENCE_STABLE_MS = 250;
 // Kennung des NVS-Datensatzes. Bei Formataenderung hochzaehlen, damit alte
 // Datensaetze nicht falsch interpretiert werden.
-// Version 2: die Encoder-Zaehlrichtung wurde invertiert (positiv = hoch), damit
-// sind alle vorher gespeicherten Positionen ungueltig und werden verworfen.
-static constexpr uint32_t PERSIST_MAGIC = 0x4C494602;  // "LIF" + Version 2
+// Kennung des Datensatztyps. Bleibt ueber alle Versionen KONSTANT -- die
+// Unterscheidung macht das Versionsfeld, nicht die Magic. Nur aendern, wenn ein
+// vollstaendig anderes Format gespeichert wird.
+static constexpr uint32_t PERSIST_MAGIC = 0x4C494654;  // "LIFT"
+
+// Aktuelle Layoutversion von LiftPersistedState.
+// Vorgehen bei einer Erweiterung: neues Feld aus reserved[] entnehmen, diese
+// Version um 1 erhoehen und beim Laden fuer aeltere Versionen einen sinnvollen
+// Standardwert setzen. Die Datensatzgroesse darf sich dabei NICHT aendern --
+// dann bleibt die gespeicherte Referenz ueber das Update hinweg erhalten.
+//   v1: position, homed, moving
+static constexpr uint16_t PERSIST_VERSION = 1;
 
 const char *LiftMotor::state_name() const {
   const uint8_t current = this->state();
@@ -130,7 +139,12 @@ void LiftMotor::setup() {
     this->pref_ = global_preferences->make_preference<LiftPersistedState>(fnv1_hash("lift_motor_state"));
     this->pref_ready_ = true;
     LiftPersistedState saved{};
-    if (this->pref_.load(&saved) && saved.magic == PERSIST_MAGIC) {
+    const bool loaded = this->pref_.load(&saved);
+    if (loaded && saved.magic == PERSIST_MAGIC && saved.version > PERSIST_VERSION) {
+      // Von einer neueren Firmware geschrieben: Felder unbekannt, nicht raten.
+      ESP_LOGW(TAG, "NVS-Datensatz hat Version %u, diese Firmware kennt nur %u -- ignoriert",
+               (unsigned) saved.version, (unsigned) PERSIST_VERSION);
+    } else if (loaded && saved.magic == PERSIST_MAGIC) {
       const bool in_limits = saved.position >= this->min_position_ && saved.position <= this->max_position_;
       if (saved.moving) {
         // Die letzte Fahrt wurde nicht regulaer beendet (Spannungsverlust oder
@@ -151,7 +165,8 @@ void LiftMotor::setup() {
         ESP_LOGI(TAG, "NVS-Datensatz vorhanden, aber nicht referenziert oder ausserhalb der Grenzen");
       }
     } else {
-      ESP_LOGI(TAG, "Kein gueltiger NVS-Datensatz: Lift startet unreferenziert");
+      ESP_LOGI(TAG, "Kein gueltiger NVS-Datensatz: Lift startet unreferenziert. "
+                    "Einmal referenzieren; ab dann uebersteht die Position OTA und Stromausfall.");
     }
     this->last_saved_position_ = position;
     this->last_saved_homed_ = this->homed_.load(std::memory_order_relaxed);
@@ -212,11 +227,13 @@ void LiftMotor::save_state_() {
       homed == this->last_saved_homed_ && moving == this->last_saved_moving_)
     return;
 
+  // Immer vollstaendig genullt anlegen, damit reserved[] definiert ist.
   LiftPersistedState state{};
+  state.magic = PERSIST_MAGIC;
+  state.version = PERSIST_VERSION;
   state.position = position;
   state.homed = homed;
   state.moving = moving;
-  state.magic = PERSIST_MAGIC;
   if (!this->pref_.save(&state))
     return;
 

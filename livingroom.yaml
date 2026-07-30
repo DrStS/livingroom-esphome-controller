@@ -344,7 +344,14 @@ cover:
     icon: "mdi:television-shimmer"
     has_position: true
     optimistic: false
-    assumed_state: false
+    # assumed_state: true ist hier fachlich richtig und loest ein UI-Problem.
+    # Home Assistant sperrt bei einem Cover die Runter-Taste, sobald die
+    # Position 0 meldet ("bereits geschlossen"), und die Hoch-Taste bei 100.
+    # Solange der Lift nicht referenziert ist, ist die Position aber unbekannt --
+    # gerade dann muss man manuell nach unten fahren koennen, um ueberhaupt
+    # referenzieren zu koennen. Mit assumed_state verzichtet HA auf dieses
+    # Sperren und zeigt Hoch/Stop/Runter dauerhaft bedienbar.
+    assumed_state: true
     open_action:
       - lambda: 'id(lift)->start_manual(1);'
     close_action:
@@ -994,10 +1001,18 @@ interval:
               id(tv_lift).position = position;
             }
           } else {
-            // Home Assistant deaktiviert die gesamte Cover-Steuerung bei NAN.
-            // 50 % ist daher nur ein neutraler UI-Platzhalter; der separate
-            // Prozent-Sensor bleibt bis zur Referenzierung bewusst unbekannt.
-            id(tv_lift).position = 0.5f;
+            // Nicht referenziert: die absolute Position ist unbekannt.
+            // NAN ist keine Option -- damit graut Home Assistant die komplette
+            // Cover-Steuerung aus, und dann kaeme man nicht mehr nach unten zur
+            // Referenzlage. Gemeldet wird deshalb 0 (= geschlossen): Das ist der
+            // Zustand, in dem referenziert wird, also die einzige Annahme, die
+            // nach dem Referenzieren sofort stimmt. Frueher standen hier 50 %,
+            // was HA faelschlich als "Geoeffnet" anzeigte.
+            // Die Tasten bleiben trotz 0 bedienbar, weil das Cover
+            // assumed_state: true gesetzt hat.
+            // Die Wahrheit steht in "TV Lift Lage" ("Nicht referenziert") und im
+            // Prozent-Sensor, der bis zur Referenzierung unbekannt bleibt.
+            id(tv_lift).position = cover::COVER_CLOSED;
           }
 
           // Nur bei Aenderung senden; zusaetzlich alle 5 s ein Lebenszeichen,

@@ -21,6 +21,7 @@ python tools/check_entity_states.py
 | `check_light_effects.py` | Zeigt die Effektlisten beider Strips und die Optionen der Szenenauswahl. |
 | `watch_lift_logs.py` | Haengt sich 25 s an den Logstream und filtert Lift- und Motormeldungen. Zum Mitlesen waehrend einer Fahrt. |
 | `encoder_diagnose.py` | Loest die Encoder-Diagnose aus und liest das Ergebnis mit. ACHTUNG: der Lift faehrt dabei kurz aufwaerts. |
+| `verify_dashboard_entities.py` | Vergleicht jede im Dashboard referenzierte Entitaet mit der Entitaetsliste des Geraets. Trennt Dashboard-Tippfehler von Problemen der Home-Assistant-Registry. |
 
 Hinweis: `encoder_diagnose.py` bewegt Hardware. Vorher pruefen, dass nach oben
 Weg frei ist.

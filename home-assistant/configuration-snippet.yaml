@@ -4,9 +4,14 @@
 # was removed together with the room-mode package: room scenes now live on the
 # ESP (select.wohnzimmer_controller_livingroom_light_scene), so no Home Assistant
 # package has to be included any more.
+#
+# IMPORTANT: do NOT add a top-level "mode: yaml" under lovelace. That would
+# switch the DEFAULT dashboard ("Overview") to YAML mode and Home Assistant
+# would then demand /config/ui-lovelace.yaml. The inner "mode: yaml" belongs to
+# the extra dashboard only, which is exactly what we want: the Overview stays
+# editable in the UI, the Living Room dashboard comes from this repository.
 
 lovelace:
-  mode: yaml
   dashboards:
     livingroom-dashboard:
       mode: yaml
