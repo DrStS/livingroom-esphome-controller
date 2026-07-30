@@ -43,6 +43,7 @@ Spiel sind.
 5. **Zweiten Administrator fuer die Automatisierung anlegen.**
    Einstellungen → Personen → Reiter *Benutzer* → *Benutzer hinzufuegen*:
    - Name: `Pipeline`
+   - Passwort: frei waehlbar, wird nur fuer die Anmeldung in Schritt 6 gebraucht
    - Administrator: ja (das Ausrollen braucht Administratorrechte)
    - "Nur lokaler Zugriff": an, wenn von aussen nichts nötig ist
 
@@ -50,10 +51,22 @@ Spiel sind.
    erkennen, was von der Automatisierung kommt, und der Zugang laesst sich
    einzeln widerrufen, ohne den eigenen Login anzufassen.
 
-6. **Token erzeugen.** Als `Pipeline` anmelden (privates Browserfenster),
-   unten links auf den Benutzernamen → *Sicherheit* → *Langlebige
-   Zugriffs-Tokens* → *Token erstellen*. Wert sofort kopieren, er wird nur
-   einmal gezeigt.
+6. **Token erzeugen.** Als `Pipeline` anmelden (am einfachsten in einem privaten
+   Browserfenster, damit die eigene Sitzung bestehen bleibt). Dann unten links
+   auf den Benutzernamen → Reiter *Sicherheit* → ganz unten *Langlebige
+   Zugriffs-Tokens* → *Token erstellen* → Namen vergeben.
+
+   **Das Token ist nicht das Passwort.** Es ist ein eigener, sehr langer String
+   (JWT, rund 180 Zeichen, beginnt mit `eyJ`), der genau hier erzeugt wird. Nur
+   dieser String kommt nach `secrets.yaml`; das Passwort des Benutzers wird
+   danach nicht mehr gebraucht.
+
+   Gruende fuer ein Token statt eines Passworts: es laesst sich einzeln
+   widerrufen, ohne den Benutzer anzufassen, es umgeht keine
+   Zwei-Faktor-Anmeldung, und es taucht in keinem Anmeldedialog auf.
+
+   Der Wert wird **nur einmal** angezeigt (mit QR-Code). Sofort kopieren --
+   danach ist er nicht mehr abrufbar und es muesste ein neues erzeugt werden.
 
 7. **SSH-Add-on installieren.** Einstellungen → Add-ons → Add-on Store →
    *Advanced SSH & Web Terminal* (aus der Community-Sammlung; das offizielle

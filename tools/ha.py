@@ -230,6 +230,16 @@ def get_states(cfg: Settings) -> dict[str, dict]:
     return {item["entity_id"]: item for item in states}
 
 
+def looks_like_token(value: str) -> bool:
+    """Grobe Formpruefung auf ein langlebiges Zugriffs-Token.
+
+    Home Assistant gibt ein JWT aus: drei mit Punkt getrennte Abschnitte, der
+    erste beginnt mit "eyJ" (base64 von '{"'). Ein Benutzerpasswort erfuellt das
+    nie, und genau diese Verwechslung ist die haeufigste.
+    """
+    return value.count(".") == 2 and value.startswith("eyJ") and len(value) > 100
+
+
 def tcp_open(host: str, port: int, timeout: float = 5.0) -> bool:
     try:
         with socket.create_connection((host, port), timeout=timeout):
@@ -296,6 +306,16 @@ def cmd_check(cfg: Settings, args: argparse.Namespace) -> None:
         print(f"{FAIL} ha_token in secrets.yaml noch nicht gesetzt -- API-Kanal ungenutzt")
         print("        Token erzeugen: als Automatisierungs-Benutzer anmelden, unten links")
         print("        auf den Namen -> Sicherheit -> Langlebige Zugriffs-Tokens.")
+        problems += 1
+    elif not looks_like_token(cfg.token):
+        # Haeufigste Verwechslung: das Passwort des Benutzers eingetragen. Ein
+        # Token ist ein JWT und sieht voellig anders aus -- das laesst sich hier
+        # erkennen, bevor Home Assistant nur ein nichtssagendes 401 liefert.
+        print(f"{FAIL} ha_token sieht nicht wie ein Zugriffs-Token aus")
+        print("        Erwartet wird ein JWT: rund 180 Zeichen, beginnt mit 'eyJ',")
+        print("        mit zwei Punkten als Trenner. Ein Benutzerpasswort ist es nicht.")
+        print("        Erzeugen unter: Benutzername (unten links) -> Sicherheit ->")
+        print("        Langlebige Zugriffs-Tokens -> Token erstellen.")
         problems += 1
     else:
         config = api_soft(cfg, "config")
