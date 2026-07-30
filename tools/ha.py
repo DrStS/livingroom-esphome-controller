@@ -411,6 +411,215 @@ def vars_of(cfg: Settings) -> dict[str, Any]:
 
 
 # =============================================================================
+# Kommando: connect -- den ESPHome-Controller in Home Assistant einbinden
+# =============================================================================
+# Home Assistant fuehrt das Einrichten einer Integration als "config flow" in
+# mehreren Schritten aus. Die Schritte sind auch ueber REST erreichbar, damit
+# laesst sich der letzte manuelle Handgriff des Setups automatisieren.
+DEVICE_HOST = "192.168.1.12"
+DEVICE_API_PORT = 6053
+
+
+def flow_post(cfg: Settings, path: str, payload: dict) -> dict:
+    request = urllib.request.Request(
+        f"{cfg.base_url}/api/config/config_entries/flow{path}",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={"Authorization": f"Bearer {cfg.token}",
+                 "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as error:
+        detail = error.read().decode("utf-8", "replace")[:400]
+        die(f"Home Assistant lehnt den Einrichtungsschritt ab ({error.code}).",
+            f"{detail}\n\nDann bleibt der Weg ueber die Oberflaeche:\n"
+            f"{cfg.base_url}/config/integrations/dashboard -> Integration "
+            f"hinzufuegen -> ESPHome.")
+
+
+def flow_abort(cfg: Settings, flow_id: str) -> None:
+    """Bricht einen begonnenen Flow ab, damit kein halbfertiger Eintrag
+    zurueckbleibt, der in der Oberflaeche als offene Meldung erscheint."""
+    request = urllib.request.Request(
+        f"{cfg.base_url}/api/config/config_entries/flow/{flow_id}",
+        method="DELETE",
+        headers={"Authorization": f"Bearer {cfg.token}"},
+    )
+    try:
+        urllib.request.urlopen(request, timeout=30).read()
+    except Exception:
+        pass
+
+
+def cmd_connect(cfg: Settings, args: argparse.Namespace) -> None:
+    secrets = yaml.safe_load(SECRETS.read_text(encoding="utf-8-sig")) or {}
+    psk = secrets.get("wohnzimmer_api_key")
+    if not psk:
+        die("wohnzimmer_api_key fehlt in secrets.yaml.")
+
+    states = get_states(cfg)
+    if any(DEVICE_PREFIX in entity for entity in states):
+        print(f"{OK} Der Controller ist schon eingebunden.")
+        print("     Neu laden bei fehlenden Entitaeten: "
+              "python tools/ha.py reload --integration")
+        return
+
+    print(f"Binde den Controller ein: {args.host}:{args.port}\n")
+    step = flow_post(cfg, "", {"handler": "esphome",
+                               "show_advanced_options": False})
+    flow_id = step.get("flow_id")
+
+    # Der Flow laeuft ueber mehrere Schritte, deren Reihenfolge sich zwischen
+    # Home-Assistant-Versionen aendern kann. Deshalb wird nicht auf eine feste
+    # Kette gesetzt, sondern auf den jeweils gemeldeten step_id reagiert.
+    for _ in range(6):
+        kind = step.get("type")
+        if kind == "create_entry":
+            title = step.get("title") or step.get("result", {}).get("title")
+            print(f"{OK} Eingebunden: {title}")
+            break
+        if kind == "abort":
+            reason = step.get("reason")
+            if reason == "already_configured":
+                print(f"{OK} war bereits eingerichtet")
+                break
+            die(f"Home Assistant bricht ab: {reason}",
+                "Bei 'cannot_connect': ist der Controller online und unter\n"
+                f"{args.host}:{args.port} erreichbar?")
+        if kind != "form":
+            flow_abort(cfg, flow_id)
+            die(f"Unerwarteter Schritt: {step}")
+
+        step_id = step.get("step_id")
+        if step_id == "user":
+            payload = {"host": args.host, "port": args.port}
+        elif step_id in ("encryption_key", "authenticate"):
+            payload = {"noise_psk": psk}
+        else:
+            flow_abort(cfg, flow_id)
+            die(f"Unbekannter Einrichtungsschritt '{step_id}'.",
+                "Dann bitte ueber die Oberflaeche einrichten:\n"
+                f"{cfg.base_url}/config/integrations/dashboard")
+        print(f"     Schritt '{step_id}' ...")
+        step = flow_post(cfg, f"/{flow_id}", payload)
+    else:
+        flow_abort(cfg, flow_id)
+        die("Der Einrichtungsablauf endet nicht.")
+
+    print("\nWarte auf die Entitaeten ...")
+    for attempt in range(12):
+        time.sleep(5)
+        states = get_states(cfg)
+        own = [e for e in states if DEVICE_PREFIX in e]
+        if len(own) >= 40:
+            print(f"{OK} {len(own)} Entitaeten des Controllers sind da")
+            print("\nWeiter mit: python tools/ha.py verify")
+            return
+        print(f"     {len(own)} Entitaeten ... ({(attempt + 1) * 5} s)")
+    print(f"{WARN} Es sind weniger Entitaeten da als erwartet.")
+    print("        Pruefen mit: python tools/ha.py entities")
+
+
+# =============================================================================
+# Kommando: addon -- Zustand des SSH-Add-ons ueber den Supervisor pruefen
+# =============================================================================
+# Home Assistant stellt die Supervisor-Schnittstelle unter /api/hassio/ bereit.
+# Damit laesst sich von hier aus feststellen, warum SSH nicht antwortet --
+# statt im Add-on-Dialog zu raten. Erlaubt ist das nur mit einem Token eines
+# Administrators.
+SSH_PORT_KEY = "22/tcp"
+
+
+def supervisor_addons(cfg: Settings) -> list[dict] | None:
+    """Versucht, die Add-on-Liste ueber den Supervisor-Proxy zu lesen.
+
+    Gibt None zurueck, wenn Home Assistant den Zugriff verweigert. Das ist der
+    Normalfall: langlebige Zugriffs-Tokens duerfen die Add-on-Verwaltung nicht
+    ansprechen, unabhaengig davon, ob der Benutzer Administrator ist. Das
+    Add-on muss deshalb in der Oberflaeche eingerichtet werden; hier wird nur
+    festgestellt, was noch fehlt.
+    """
+    request = urllib.request.Request(
+        f"{cfg.base_url}/api/hassio/addons",
+        headers={"Authorization": f"Bearer {cfg.token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        return payload["data"]["addons"]
+    except Exception:
+        return None
+
+
+def cmd_addon(cfg: Settings, args: argparse.Namespace) -> None:
+    print(f"Pruefe den SSH-Zugang zu {cfg.host}\n")
+
+    reachable = tcp_open(cfg.host, cfg.ssh_port, timeout=5)
+    if reachable:
+        print(f"{OK} Port {cfg.ssh_port} ist offen")
+        result = ssh_run(cfg, "echo bereit", check=False)
+        if result.returncode == 0:
+            print(f"{OK} Anmeldung mit Schluessel erfolgreich")
+            listing = ssh_run(cfg, "ls /config/configuration.yaml 2>/dev/null || true",
+                              check=False)
+            if listing.stdout.strip():
+                print(f"{OK} /config ist sichtbar")
+                print("\nAlles bereit. Weiter mit: python tools/ha.py setup --esphome")
+                return
+            print(f"{FAIL} /config ist nicht sichtbar")
+            print("        Im Add-on den Schalter 'Protection mode' ausschalten.")
+            sys.exit(1)
+        print(f"{FAIL} Port offen, aber die Anmeldung wird abgelehnt")
+        detail = result.stderr.strip().splitlines()
+        if detail:
+            print(f"        {detail[-1]}")
+        print("\nDas heisst: das Add-on laeuft und ist erreichbar, kennt aber den")
+        print("Schluessel nicht. Zu pruefen in der Add-on-Konfiguration:")
+        print("  - steht der Key als EIN Listeneintrag unter authorized_keys?")
+        print("  - vollstaendig von 'ssh-ed25519' bis zum Kommentar am Ende?")
+        print("  - nach dem Speichern das Add-on neu gestartet?")
+        local = local_public_key(cfg)
+        if local:
+            print(f"\nErwarteter Schluessel:\n{local}")
+        sys.exit(1)
+
+    print(f"{FAIL} Port {cfg.ssh_port} antwortet nicht")
+
+    addons = supervisor_addons(cfg)
+    if addons is None:
+        print(f"{WARN} Der Add-on-Zustand laesst sich von hier nicht abfragen.")
+        print("        Home Assistant erlaubt langlebigen Zugriffs-Tokens keinen")
+        print("        Zugriff auf die Add-on-Verwaltung. Das ist unabhaengig von")
+        print("        den Rechten des Benutzers und laesst sich nicht umgehen.")
+    else:
+        ssh_addons = [a for a in addons if "ssh" in a["slug"]]
+        if not ssh_addons:
+            print(f"{FAIL} Es ist kein SSH-Add-on installiert.")
+        else:
+            for entry in ssh_addons:
+                print(f"     {entry['name']} ({entry['slug']}): {entry.get('state')}")
+
+    print("\nMit weitem Abstand haeufigste Ursache: die Portfreigabe fehlt.")
+    print("Ein Add-on kann laufen und trotzdem von aussen unerreichbar sein --")
+    print("dann ist SSH nur ueber die Weboberflaeche des Add-ons nutzbar.")
+    print(f"\nZu pruefen unter:\n  {cfg.base_url}/hassio/dashboard")
+    print("\n  1. Add-on 'Terminal & SSH' oeffnen, Reiter Konfiguration.")
+    print("  2. Karte 'Netzwerk' suchen, Zeile '22/tcp'.")
+    print("     Ist das Feld leer, dort 22 eintragen und speichern.")
+    print("  3. Reiter Info -> Neu starten.")
+    print("\nDanach erneut: python tools/ha.py addon")
+    sys.exit(1)
+
+
+def local_public_key(cfg: Settings) -> str | None:
+    path = Path(cfg.ssh_key).expanduser() if cfg.ssh_key else Path.home() / ".ssh" / "ha_livingroom"
+    public = path.with_suffix(path.suffix + ".pub")
+    return public.read_text(encoding="utf-8").strip() if public.exists() else None
+
+
+# =============================================================================
 # Kommando: token -- Zugriffs-Token pruefen und in secrets.yaml ablegen
 # =============================================================================
 def write_secret(key: str, value: str) -> None:
@@ -776,7 +985,11 @@ def cmd_entities(cfg: Settings, args: argparse.Namespace) -> None:
         die("Home Assistant kennt keine Entitaet des Controllers.",
             "Geraet unter Einstellungen -> Geraete & Dienste -> ESPHome hinzufuegen.")
 
-    broken = {k: v for k, v in own.items() if v["state"] in ("unavailable", "unknown")}
+    # Buttons haben bis zur ersten Ausloesung keinen Wert -- kein Fehler.
+    stateless = ("button.", "scene.", "input_button.")
+    broken = {k: v for k, v in own.items()
+              if not k.startswith(stateless)
+              and v["state"] in ("unavailable", "unknown")}
     # Home Assistant haengt bei einer Namenskollision ein _2 an. Das passiert,
     # wenn ein alter Registry-Eintrag denselben Namen belegt -- der haeufigste
     # Grund fuer "Entitaet nicht gefunden" im Dashboard.
@@ -785,7 +998,7 @@ def cmd_entities(cfg: Settings, args: argparse.Namespace) -> None:
     print(f"{len(own)} Controller-Entitaeten in Home Assistant\n")
     for entity_id in sorted(own):
         state = own[entity_id]["state"]
-        mark = "!" if state in ("unavailable", "unknown") else " "
+        mark = "!" if entity_id in broken else " "
         if args.all or mark == "!":
             print(f" {mark} {entity_id:60} {state}")
 
@@ -846,8 +1059,12 @@ def cmd_verify(cfg: Settings, args: argparse.Namespace) -> None:
     for path in dashboards:
         referenced = sorted(collect_dashboard_entities(path))
         missing = [e for e in referenced if e not in states]
+        # Zustandslose Domains ausnehmen: ein Button hat bis zur ersten
+        # Ausloesung keinen Wert, das ist kein Fehler.
+        stateless = ("button.", "scene.", "input_button.")
         empty = [e for e in referenced
-                 if e in states and states[e]["state"] in ("unavailable", "unknown")]
+                 if e in states and not e.startswith(stateless)
+                 and states[e]["state"] in ("unavailable", "unknown")]
         print(f"{path.relative_to(ROOT).as_posix()}")
         print(f"  {len(referenced)} Referenzen")
         if missing:
@@ -909,6 +1126,13 @@ def main() -> None:
     wait.add_argument("--minutes", type=int, default=15,
                       help="maximale Wartezeit (Vorgabe 15)")
 
+    sub.add_parser("addon", help="SSH-Zugang eingrenzen: Port, Schluessel, /config")
+
+    connect = sub.add_parser("connect", help="ESPHome-Controller in Home Assistant einbinden")
+    connect.add_argument("--host", default=DEVICE_HOST, help=f"Vorgabe {DEVICE_HOST}")
+    connect.add_argument("--port", type=int, default=DEVICE_API_PORT,
+                         help=f"Vorgabe {DEVICE_API_PORT}")
+
     token = sub.add_parser("token", help="Zugriffs-Token pruefen und in secrets.yaml ablegen")
     token.add_argument("--value", help="Token direkt uebergeben (landet in der Shell-History)")
 
@@ -949,6 +1173,8 @@ def main() -> None:
     handlers = {
         "check": cmd_check,
         "wait": cmd_wait,
+        "addon": cmd_addon,
+        "connect": cmd_connect,
         "token": cmd_token,
         "keygen": cmd_keygen,
         "deploy": cmd_deploy,
