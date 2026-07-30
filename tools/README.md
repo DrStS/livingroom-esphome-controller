@@ -22,6 +22,7 @@ python tools/check_entity_states.py
 | `watch_lift_logs.py` | Haengt sich 25 s an den Logstream und filtert Lift- und Motormeldungen. Zum Mitlesen waehrend einer Fahrt. |
 | `encoder_diagnose.py` | Loest die Encoder-Diagnose aus und liest das Ergebnis mit. ACHTUNG: der Lift faehrt dabei kurz aufwaerts. |
 | `verify_dashboard_entities.py` | Vergleicht jede im Dashboard referenzierte Entitaet mit der Entitaetsliste des Geraets. Trennt Dashboard-Tippfehler von Problemen der Home-Assistant-Registry. |
+| `test_persistence.py` | Setzt die Referenz, startet den Controller neu und prueft, ob Referenz und Position aus dem NVS zurueckkommen. Bewegt keine Hardware. |
 
 Hinweis: `encoder_diagnose.py` bewegt Hardware. Vorher pruefen, dass nach oben
 Weg frei ist.
