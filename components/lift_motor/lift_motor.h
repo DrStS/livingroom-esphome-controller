@@ -145,6 +145,10 @@ class LiftMotor : public Component {
   /** Verwirft die gespeicherte Referenz (z. B. nach Handverstellung im
    * spannungslosen Zustand). Danach ist neues Referenzieren noetig. */
   void clear_reference();
+  /** Synchronisiert alle von ESPHome vorgemerkten Preferences (Lift, Licht,
+   * Szene, Reglerwerte) nur bei ausgeschaltetem Motor und kooperativ pausiertem
+   * Regeltask. Ein Aufruf ohne vorgemerkte Aenderungen schreibt kein Flash. */
+  bool sync_preferences_safely();
 
   int64_t position() const { return this->pos_.load(std::memory_order_relaxed); }
   int64_t target() const { return this->target_.load(std::memory_order_relaxed); }
@@ -195,20 +199,50 @@ class LiftMotor : public Component {
    * Bewusst NICHT periodisch aufrufen: jeder Aufruf schreibt echt ins Flash
    * (inklusive sync) und kostet Schreibzyklen; ausserdem schaltet ein
    * NVS-Schreibvorgang kurz den Flash-Cache ab und haelt damit den Regeltask
-   * auf Kern 1 an. Aufgerufen wird nur bei seltenen Ereignissen: Fahrtbeginn,
-   * Fahrtende, Referenz setzen und Referenz verwerfen. Das ergibt zwei
-   * Schreibvorgaenge pro Fahrt.
-   */
-  void save_state_();
-  /** Uebernimmt die im NVS gefundene Position in den Encoder.
+   * auf Kern 1 an. Aufgerufen wird nur bei seltenen Ereignissen: Fahrtbeginn
+   * sofort mit moving=true, Fahrtende erst nach drei Sekunden unveraenderter
+   * Encoderposition mit moving=false sowie Referenz setzen/verwerfen. Das
+   * ergibt weiterhin hoechstens zwei Schreibvorgaenge pro Fahrt.
    *
-   * Bewusst NICHT aus setup() aufgerufen, sondern beim ersten loop(): das
-   * Setzen der Encoderposition loest dort ein publish_state() mit Filterkette
-   * und Callbacks aus. Waehrend der Startphase ist das riskant -- genau daran
-   * ist die Firmware haengengeblieben, sobald erstmals eine Position ungleich 0
-   * gespeichert war. Im laufenden Betrieb ist derselbe Aufruf unkritisch.
+   * moving wird explizit uebergeben statt erneut aus state_ gelesen. Dadurch
+   * kann ein Zustandswechsel des 1-ms-Tasks waehrend des NVS-Schreibens den
+   * Sicherheitsmarker nicht verfaelschen.
+   */
+  bool save_state_(bool moving);
+  /** Sichert vor einer Fahrt den moving=true-Marker. Eine Fahrt wird nur
+   * freigegeben, wenn der Marker nachweislich ins NVS geschrieben wurde. */
+  bool prepare_motion_persistence_();
+  /** Uebernimmt die im NVS gefundene Position in den logischen Offset.
+   *
+   * Bewusst erst im ersten loop()-Durchlauf und nicht in setup(). Der
+   * PCNT-Encoder selbst wird dabei niemals geschrieben oder publiziert; nur
+   * der atomare Offset zwischen Rohzaehler und logischer Liftposition aendert
+   * sich. Damit bleibt die Wiederherstellung vom 1-ms-Regeltask entkoppelt.
    */
   void apply_restored_position_();
+  /** Referenzierte Position: Encoder-Rohwert plus Offset.
+   *
+   * WARUM UEBERHAUPT EIN OFFSET:
+   * Der Regeltask liest den Encoder in jedem 1-ms-Zyklus, also rund tausendmal
+   * pro Sekunde, und dabei jedes Mal die PCNT-Hardware unter einem Spinlock.
+   * Wuerde parallel dazu aus dem Mainloop encoder_->set_position() geschrieben,
+   * greifen zwei Kerne gleichzeitig auf dieselbe Struktur zu -- inklusive
+   * IDF-Treiberaufruf im gesperrten Abschnitt. Genau daran ist der Start
+   * haengengeblieben, sobald eine gespeicherte Position uebernommen werden
+   * musste, und zwar nicht reproduzierbar: derselbe Stand lief einmal durch und
+   * scheiterte danach.
+   *
+   * Deshalb wird der Encoder von LiftMotor ausschliesslich GELESEN. Der
+   * Nullpunkt liegt im Offset, den nur der Mainloop schreibt und der Regeltask
+   * nur liest. Damit gibt es keinen konkurrierenden Schreibzugriff mehr.
+   */
+  int64_t read_position_() {
+    return this->encoder_->get_position() + this->position_offset_.load(std::memory_order_relaxed);
+  }
+  /** Setzt den Nullpunkt so, dass die aktuelle Lage als "position" gilt. */
+  void set_reference_offset_(int64_t position) {
+    this->position_offset_.store(position - this->encoder_->get_position(), std::memory_order_release);
+  }
   bool target_in_limits_(int64_t target) const {
     return target >= this->min_position_ && target <= this->max_position_;
   }
@@ -258,6 +292,11 @@ class LiftMotor : public Component {
   int64_t speed_ref_us_{0};
   float speed_filtered_{0.0f};
 
+  /** Verschiebung zwischen Encoder-Rohwert und referenzierter Position.
+   * Geschrieben nur aus dem Mainloop (Referenzieren, Wiederherstellen),
+   * gelesen auch aus dem Regeltask -- deshalb atomar. */
+  std::atomic<int64_t> position_offset_{0};
+
   std::atomic<int64_t> pos_{0};
   std::atomic<int64_t> target_{0};
   std::atomic<int64_t> last_observed_pos_{0};
@@ -285,6 +324,11 @@ class LiftMotor : public Component {
   std::atomic<uint32_t> overruns_{0};
   std::atomic<float> stall_duty_{0.0f};
   std::atomic<float> stall_speed_{0.0f};
+  /** Kooperative Pause fuer synchrone NVS-Flashzugriffe. Der Regeltask
+   * bestaetigt die Pause nur an einer sicheren Zyklusgrenze, an der er keinen
+   * PCNT- oder Output-Lock haelt. */
+  std::atomic<bool> persistence_pause_requested_{false};
+  std::atomic<bool> persistence_task_paused_{false};
 
   uint32_t last_seen_hb_{0};
   uint32_t last_hb_change_ms_{0};
@@ -303,6 +347,10 @@ class LiftMotor : public Component {
   bool last_saved_homed_{false};
   bool last_saved_moving_{false};
   bool saved_valid_{false};
+  /** Genau ein Endspeicherversuch pro Fahrt. Bei einem Fehler bleibt der
+   * bestehende moving=true-Marker erhalten; es gibt keine periodische
+   * Flash-Wiederholung. */
+  bool end_save_pending_{false};
 };
 
 }  // namespace esphome::lift_motor

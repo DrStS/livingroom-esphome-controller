@@ -18,8 +18,7 @@ keeps working without Home Assistant.
 | `sensor.wohnzimmer_controller_tv_lift_lage` | Text Sensor | `Unten`, `Oben`, `Zwischenlage xx %`, `Faehrt hoch`, `Faehrt runter`, `Nicht referenziert` |
 | `sensor.wohnzimmer_controller_tv_lift_position_percent` | Sensor | 0–100 % of the 94500-count travel |
 | `sensor.wohnzimmer_controller_tv_lift_position_mm` | Sensor | mm (144 counts/mm) |
-| `sensor.wohnzimmer_controller_tv_lift_position_pulses` | Sensor (diagnostic) | Lift position in encoder counts |
-| `sensor.wohnzimmer_controller_motor_encoder_position` | Sensor (diagnostic) | Raw PCNT counter value |
+| `sensor.wohnzimmer_controller_tv_lift_position_pulses` | Sensor (diagnostic) | Referenced logical lift position in encoder counts |
 | `sensor.wohnzimmer_controller_lift_geschwindigkeit` | Sensor (diagnostic) | Measured encoder speed in counts/s |
 | `sensor.wohnzimmer_controller_lift_zustand` | Text Sensor (diagnostic) | `IDLE`, `MANUAL`, `MOVING`, `REACHED`, `STALL`, `TIMEOUT`, `LIMIT`, `FAULT`, `UNREFERENCED` |
 | `number.wohnzimmer_controller_lift_max_geschwindigkeit` | Number (diagnostic/config) | Cruise speed in counts/s, default 1500 |

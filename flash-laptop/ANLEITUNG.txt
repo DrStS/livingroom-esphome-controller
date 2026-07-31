@@ -54,21 +54,39 @@ SCHRITT 4 -- Fertig
 Der Controller sollte nach etwa 30 Sekunden wieder im Netzwerk sein
 (192.168.1.12) und in Home Assistant erscheinen.
 
-Danach musst du EINMAL neu referenzieren, weil diese Firmware die gespeicherte
-Position bewusst nicht mehr laedt:
-  1. Lift mit dem Pfeil nach unten auf die untere Endlage fahren.
-  2. In Home Assistant unter Diagnose den Schalter "Lift Referenz" einschalten.
+Pruefe danach in Home Assistant unter Diagnose den Schalter "Lift Referenz":
+- Ist er EIN, wurden Referenz und Position aus dem ESP32-NVS wiederhergestellt.
+- Ist er AUS, ist kein sicher nutzbarer Stand gespeichert. Dann den Lift mit
+  dem Pfeil nach unten auf die untere Endlage fahren und den Schalter dort
+  einschalten. Nicht referenziert sind nur manuelle Pfeilfahrten erlaubt.
 
 
 WAS IN DIESER FIRMWARE ANDERS IST
 ---------------------------------
-Der Absturz kam beim Start, wenn eine gespeicherte Position ungleich 0 aus dem
-Flash geladen wurde. Genau dieses Laden ist hier abgeschaltet
-(persist_position: false). Alles andere ist unveraendert.
+Diese Firmware hat die Positionspersistenz wieder aktiviert
+(persist_position: true). LiftMotor schreibt den PCNT-Encoder beim
+Referenzieren und Wiederherstellen nicht mehr um. Der Encoder bleibt ein reiner
+Rohzaehler; der logische Nullpunkt und eine gespeicherte Position werden ueber
+einen atomaren Offset abgebildet. Damit ist der konkurrierende Encoder-
+Schreibzugriff zwischen Mainloop und 1-ms-Regeltask vollstaendig entfernt.
 
-Das ist eine Zwischenloesung: Der Lift laeuft wieder vollstaendig, verliert
-aber bei Stromausfall seine Referenz. Sobald die Ursache im Protokoll bestaetigt
-und behoben ist, wird die Persistenz wieder eingeschaltet.
+Ein gueltiger, im Stillstand gespeicherter NVS-Stand kann nach OTA oder
+Stromausfall wiederhergestellt werden. Am Fahrtbeginn wird sofort moving=true
+gesichert. Der Endstand wird erst geschrieben, wenn nach dem Fahrtende drei
+Sekunden lang kein Encoderpuls mehr kam; jeder spaete Puls startet diese
+Ruhezeit neu. Damit bleibt es bei hoechstens zwei Schreibvorgaengen je Fahrt.
+Meldet der Datensatz eine unterbrochene Fahrt, ist er ungueltig oder war die
+Referenz bereits verworfen, startet der Lift aus Sicherheitsgruenden
+unreferenziert.
+
+Auch Lichtzustand, Farbe, Helligkeit, Effekt, Raum-Szene und weitere ESPHome-
+Zustaende werden spaetestens etwa fuenf Sekunden nach einer Aenderung im
+Lift-Stillstand sicher synchronisiert. Aenderungen waehrend einer Liftfahrt
+werden beim naechsten 5-Sekunden-Takt nach dem Anhalten nachgeholt. Ein Sync
+ohne vorgemerkte Aenderungen fuehrt keinen Flash-Schreibvorgang aus.
+
+OTA und geregeltes Herunterfahren stoppen zuerst den Lift und synchronisieren
+die vorgemerkten Zustaende unter einer kooperativen Pause des 1-ms-Regeltasks.
 
 
 WENN ES NICHT KLAPPT

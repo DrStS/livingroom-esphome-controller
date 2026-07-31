@@ -61,6 +61,20 @@ esphome:
             lambda: 'return id(livingroom_light_scene).current_option() != "Manual";'
           then:
             - script.execute: apply_light_scene
+  # Beim geregelten Herunterfahren laufen die on_shutdown-Hooks in umgekehrter
+  # Setup-Reihenfolge. Prioritaet 1000 ordnet diesen Hook direkt vor dem
+  # ESPHome-Preferences-Syncer ein: Erst Motor aus und alle Pending-Zustaende
+  # unter kooperativer Task-Pause synchronisieren, danach ist der Framework-
+  # Sync nur noch ein leerer Aufruf ohne Flashzugriff.
+  on_shutdown:
+    - priority: 1000
+      then:
+        - lambda: |-
+            id(lift)->stop();
+            if (id(lift)->sync_preferences_safely())
+              ESP_LOGI("shutdown", "Lift aus; Preferences vor Shutdown sicher synchronisiert.");
+            else
+              ESP_LOGE("shutdown", "Preferences konnten vor Shutdown nicht sicher synchronisiert werden.");
 
 esp32:
   board: esp32-s3-devkitc-1
@@ -73,13 +87,23 @@ psram:
   mode: octal
   speed: 80MHz
 
+# ESPHomes normaler 60-s-Sync lief unkoordiniert parallel zum 1-ms-Regeltask.
+# Der automatische Framework-Intervallsync ist deshalb vollstaendig deaktiviert;
+# alle vorgemerkten Zustaende werden unten alle 5 s ueber
+# LiftMotor::sync_preferences_safely() geschrieben. Ohne Pending-Aenderungen
+# kehrt ESP32Preferences::sync() ohne Flashzugriff sofort zurueck. Der weiterhin
+# vorhandene Framework-Shutdown-Sync ist leer, weil der on_shutdown-Hook oben
+# unmittelbar vorher sicher synchronisiert.
+preferences:
+  flash_write_interval: never
+
 # =============================================================================
 # POSITIONSREGELUNG auf eigenem FreeRTOS-Task (Kern 1, fester 1-ms-Takt).
 # LiftMotor ist alleiniger Motor-Owner, liest PCNT direkt und startet den Task
 # in setup(). Der Taskstart selbst gibt den Motor nicht frei.
 # Logische Richtung: positive Encoderposition/LPWM = Oeffnen/Aufwaerts;
-# 0 = geschlossen/unten, 940 = offen/oben. Die Motorzuordnung wurde beim
-# manuellen Test bestaetigt; die Encoder-Invertierung bleibt false.
+# 0 = geschlossen/unten, 940 = offen/oben. Die Motorzuordnung und
+# invert_direction=true wurden am realen Aufbau bestaetigt.
 # =============================================================================
 lift_motor:
   id: lift
@@ -149,27 +173,21 @@ lift_motor:
   # Position und Referenz liegen im NVS. Die Mechanik ist selbsthemmend
   # (Getriebe auf Trapezgewinde), ohne Strom bleibt der Lift stehen -- der
   # gespeicherte Stand ist daher nach dem Neustart weiter gueltig.
-  # Geschrieben wird NUR bei Fahrtbeginn, Fahrtende und beim Referenzieren,
-  # also zwei Flash-Schreibvorgaenge pro Fahrt. Kein periodisches Speichern:
-  # das wuerde Flash-Zyklen verbrauchen und beim NVS-Schreiben jedes Mal den
-  # Flash-Cache und damit kurz den 1-ms-Regeltask anhalten.
-  # Wird eine Fahrt durch Spannungsverlust unterbrochen, ist der gespeicherte
-  # Stand veraltet; der Lift startet dann bewusst unreferenziert.
+  # Geschrieben wird NUR bei Fahrtbeginn (moving=true) und nach Fahrtende,
+  # sobald drei Sekunden lang kein Encoderpuls mehr kam (moving=false). Jeder
+  # spaete Puls startet die Ruhezeit neu. Damit bleibt es bei hoechstens zwei
+  # Flash-Schreibvorgaengen pro Fahrt; es gibt kein periodisches Speichern.
+  # Wird die Versorgung waehrend einer Fahrt oder vor dem stabilen Endstand
+  # getrennt, bleibt moving=true gespeichert und der Lift startet bewusst
+  # unreferenziert statt mit einer moeglicherweise falschen Position.
+  #
+  # Die Wiederherstellung liest den NVS-Datensatz in setup() nur ein und setzt
+  # im ersten loop()-Durchlauf ausschliesslich den atomaren Positionsoffset.
+  # LiftMotor schreibt niemals in den PCNT-Encoder. Damit gibt es keinen
+  # konkurrierenden Encoder-Schreibzugriff zwischen Mainloop und 1-ms-Regeltask.
+  # Die genaue fruehere Absturzursache ist ohne Crashlog nicht bewiesen; diese
+  # Architektur entfernt jedoch diese Race-Klasse vollstaendig.
   # Position und Referenz ueberleben Stromausfall und OTA.
-  #
-  # VORGESCHICHTE, damit das nicht noch einmal passiert: Die Wiederherstellung
-  # stand ursprünglich in LiftMotor::setup() und hat dort direkt
-  # encoder_->set_position() aufgerufen -- ein Eingriff in eine fremde
-  # Komponente mitten in der Startphase, der dort ein publish_state() mit
-  # Filterkette und Callbacks ausloest. Solange die gespeicherte Position 0 war,
-  # fiel das nicht auf. Beim ersten Start mit einem echten Wert (9448 Counts)
-  # kam die Firmware nicht mehr durch den Start, ESPHome ging dauerhaft in den
-  # Safe Mode (nur Netzwerk und OTA) und war nur per USB zu retten.
-  #
-  # Jetzt zweistufig: setup() liest den Datensatz nur, angewendet wird er im
-  # ersten loop()-Durchlauf, wenn alle Komponenten initialisiert sind. Bis dahin
-  # gilt der Lift als unreferenziert -- absolute Fahrten sind also gesperrt,
-  # manuelle Fahrt bleibt moeglich.
   persist_position: true
 
 # Eigener SPI-DMA-Treiber fuer den zweiten LED-Strip (interrupt-immun trotz W5500).
@@ -200,7 +218,10 @@ ota:
     on_begin:
       - lambda: |-
           id(lift)->stop();
-          ESP_LOGW("ota", "OTA startet -- Lift gestoppt und Antrieb abgeschaltet.");
+          if (id(lift)->sync_preferences_safely())
+            ESP_LOGW("ota", "OTA startet -- Lift aus; Preferences sicher synchronisiert.");
+          else
+            ESP_LOGE("ota", "OTA startet mit ausgeschaltetem Lift, Preferences-Sync jedoch fehlgeschlagen.");
 
 # Zeitquelle aus Home Assistant -> Tages-Energiezaehler (Reset um Mitternacht).
 time:
@@ -551,10 +572,14 @@ sensor:
   # GPIO16/GPIO18 bleiben reine Eingaenge ohne interne Pull-Widerstaende.
   # x4 und 10-us-Filter bleiben aktiv; invert_direction wird erst nach einem
   # beaufsichtigten Richtungstest bei Bedarf geaendert.
+  # Der rohe PCNT-Zaehler bleibt intern fuer LiftMotor erhalten, wird aber nicht
+  # mehr als eigene HA-Entitaet publiziert. Seit dem Offset-Umbau ist dieser
+  # bootrelative Rohwert absichtlich nicht die Liftposition und kann negativ
+  # sein. Der Regeltask liest ihn direkt; ein zusaetzliches 250-ms-Polling im
+  # Mainloop ist unnoetig.
   - platform: pcnt_quadrature
-    name: "Motor Encoder Position"
     id: motor_encoder
-    entity_category: diagnostic
+    internal: true
     pin_a:
       number: ${pin_encoder_a}
       mode:
@@ -568,7 +593,7 @@ sensor:
     # Messung am Aufbau: ohne Invertierung zaehlte Aufwaerts negativ. Gewuenscht
     # ist positiv = hoch/offen, 0 = unten/geschlossen -- daher invertiert.
     invert_direction: true
-    update_interval: 250ms
+    update_interval: never
 
   # --- Lift-Position (echt, aus PCNT-Encoder) ---
   # Die Umrechnung Counts -> mm folgt dem Uebersetzungsverhaeltnis aus
@@ -583,7 +608,9 @@ sensor:
     state_class: measurement
     accuracy_decimals: 0
     update_interval: 500ms
-    lambda: 'return (float) id(motor_encoder).get_position();'
+    # Referenzierte Position vom Regler, NICHT der bootrelative PCNT-Rohwert:
+    # Der Nullpunkt liegt seit dem Offset-Umbau in LiftMotor.
+    lambda: 'return (float) id(lift)->position();'
   - platform: template
     name: "TV Lift Position mm"
     id: tv_lift_position_mm
@@ -598,7 +625,8 @@ sensor:
       constexpr float counts_per_mm =
           ((float) ${lift_encoder_counts_per_motor_rev} * (float) ${lift_gear_ratio}) /
           (float) ${lift_screw_lead_mm};
-      return (float) id(motor_encoder).get_position() / counts_per_mm;
+      // Referenzierte Position vom Regler, nicht der Encoder-Rohwert.
+      return (float) id(lift)->position() / counts_per_mm;
   # --- Lift-Geschwindigkeit (Diagnose der Geschwindigkeitsregelung) ---
   # Gefilterte Encodergeschwindigkeit in Counts/s, vorzeichenbehaftet
   # (positiv = Aufwaerts/Oeffnen). 288 Counts/mm -> 288 Counts/s = 1 mm/s.
@@ -611,8 +639,56 @@ sensor:
     entity_category: diagnostic
     state_class: measurement
     accuracy_decimals: 0
-    update_interval: 500ms
+    update_interval: 200ms
     lambda: 'return id(lift)->speed();'
+
+  # Signiertes Regler-Duty: positiv = aufwaerts, negativ = abwaerts.
+  # Zusammen mit Soll-/Istgeschwindigkeit zeigt dieser Wert, ob das beobachtete
+  # Stop-and-go vom PI-Clamping (Duty 0 bei weiterhin MOVING) stammt.
+  - platform: template
+    name: "Lift Duty"
+    id: lift_duty
+    unit_of_measurement: "%"
+    entity_category: diagnostic
+    state_class: measurement
+    accuracy_decimals: 1
+    update_interval: 200ms
+    lambda: 'return id(lift)->duty() * 100.0f;'
+
+  - platform: template
+    name: "Lift Sollgeschwindigkeit"
+    id: lift_speed_command
+    unit_of_measurement: "counts/s"
+    icon: "mdi:speedometer-slow"
+    entity_category: diagnostic
+    state_class: measurement
+    accuracy_decimals: 0
+    update_interval: 200ms
+    lambda: 'return id(lift)->speed_command();'
+
+  # Lebenszeichen des 1-ms-Regeltasks. Entscheidend fuer die Unterscheidung
+  # zweier sonst gleich aussehender Fehlerbilder: Stehen die Zyklen still,
+  # waehrend die Position einfriert, hing der Regeltask selbst (z. B. Flash-Cache
+  # aus). Laufen die Zyklen weiter und die Position bleibt trotzdem stehen, liegt
+  # es an der Encoder-Auswertung. Ersetzt bewusst die frueher entfernte rohe
+  # Encoderentitaet -- der PCNT-Rohwert bleibt intern.
+  - platform: template
+    name: "Lift Regelzyklen"
+    id: lift_control_cycles
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: 'return (float) id(lift)->cycles();'
+
+  - platform: template
+    name: "Lift Taktausreisser"
+    id: lift_control_overruns
+    entity_category: diagnostic
+    state_class: total_increasing
+    accuracy_decimals: 0
+    update_interval: 1s
+    lambda: 'return (float) id(lift)->overruns();'
 
   - platform: template
     name: "TV Lift Position Percent"
@@ -730,10 +806,13 @@ switch:
     # Diagnose-Kategorie: im Alltag wird der Lift ueber das Cover bedient, der
     # Referenzschalter ist ein Einrichtungs-/Servicebedienelement.
     entity_category: diagnostic
-    lambda: 'return id(lift)->homed();'
+    # Während der 800-ms-Stillstandsprüfung bereits EIN anzeigen. Nach Erfolg
+    # bleibt homed=true; bei einem Fehler wird reference_pending verworfen.
+    lambda: 'return id(lift)->homed() || id(lift)->reference_pending();'
     turn_on_action:
       - script.execute: lift_set_reference_here
     turn_off_action:
+      - script.stop: lift_set_reference_here
       - lambda: 'id(lift)->clear_reference();'
 
 select:
@@ -817,7 +896,12 @@ script:
   - id: lift_set_reference_here
     mode: single
     then:
-      - lambda: 'id(lift)->stop();'
+      # Setzt reference_pending sofort, damit der Schalter waehrend der
+      # Stillstandswartezeit nicht optisch zurueckspringt. Der Motor wird dabei
+      # bereits sicher gestoppt.
+      - lambda: |-
+          if (!id(lift)->prepare_reference())
+            ESP_LOGE("lift", "Referenzvorbereitung fehlgeschlagen.");
       # Auslauf und Stillstandspruefung des Reglers abwarten (>= 250 ms).
       - delay: 800ms
       - lambda: |-
@@ -825,6 +909,7 @@ script:
             ESP_LOGI("lift", "Referenz gesetzt: untere Endlage = 0, Softlimits 0..%lld aktiv.",
                      (long long) id(lift)->max_position());
           } else {
+            id(lift)->clear_reference();
             ESP_LOGE("lift", "Referenz NICHT gesetzt -- Meldung oben pruefen (Lift muss stehen).");
           }
 
@@ -982,6 +1067,16 @@ script:
           }
 
 interval:
+  # Gemeinsamer sicherer Preferences-Sync fuer Licht, Szene, Reglerwerte,
+  # Energiezaehler und sonstige ESPHome-Zustaende. Waehrend einer Liftfahrt
+  # wird nicht synchronisiert; der naechste 5-s-Takt holt es im Stillstand nach.
+  # Ein Aufruf ohne vorgemerkte Aenderungen schreibt laut ESP32-Backend nichts.
+  - interval: 5s
+    then:
+      - lambda: |-
+          if (!id(lift)->busy())
+            id(lift)->sync_preferences_safely();
+
   # Cover-Status aktualisieren. Publiziert wird nur bei echter Aenderung (plus
   # ein Lebenszeichen alle 5 s), nicht 5x pro Sekunde -- das sparte sonst
   # weder API-Bandbreite noch beruhigte es die Oberflaeche.

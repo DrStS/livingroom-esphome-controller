@@ -17,6 +17,20 @@ Manual, Aus, Kaminfeuer, Vitrine, Kaminfeuer + Vitrine, Cinema, Feuerwerk.
 The earlier Home Assistant room-mode package (helper plus scripts) was deleted;
 the ESP scene select replaces it.
 
+## Persistent state
+
+LED power, brightness, color and effect, the selected room scene, intensity and
+other ESPHome preferences are synchronized after at most about five seconds of
+lift standstill. Changes made while the lift is moving are deferred until the
+next five-second interval after it stops. The synchronized call is coordinated
+with the 1 ms lift task; when no preference is pending, the ESP32 backend returns
+without a flash write.
+
+Lift position persistence remains event-based rather than periodic: `moving=true`
+is stored before motor enable, and the final position is stored once after three
+seconds without an encoder pulse. This keeps interrupted travel conservative and
+limits lift-specific flash writes to at most two relevant records per trip.
+
 ## Main files
 
 ```text

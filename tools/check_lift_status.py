@@ -18,7 +18,8 @@ async def main() -> None:
             kind = type(entity).__name__
             if entity.name in {"Lift Referenz", "Lift Zustand", "TV Lift",
                                "TV Lift Position Pulses", "TV Lift Position Percent",
-                               "TV Lift Position mm", "Lift Geschwindigkeit"}:
+                               "TV Lift Position mm", "Lift Geschwindigkeit",
+                               "Lift Sollgeschwindigkeit", "Lift Duty"}:
                 wanted[entity.key] = (kind, entity.name)
 
         found = {}

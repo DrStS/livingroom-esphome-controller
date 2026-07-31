@@ -11,7 +11,9 @@
 #   Verlauf     Ausschliesslich Zeitverlaeufe.
 #   Diagnose    Service, Regler, Messtechnik, System.
 #
-# Alle 41 Entitaeten des Controllers sind genau einmal untergebracht. Geprueft
+# Alle 40 aktiven Entitaeten des Controllers sind untergebracht. Die interne
+# rohe PCNT-Entitaet wird absichtlich nicht nach Home Assistant exportiert.
+# Geprueft
 # mit:
 #     python tools/ha.py verify                  (Referenzen -> Registry)
 #     python tools/verify_dashboard_entities.py  (Referenzen -> Geraet)
@@ -257,8 +259,6 @@ views:
             entities:
               - entity: sensor.wohnzimmer_controller_tv_lift_position_pulses
                 name: Position in Pulsen
-              - entity: sensor.wohnzimmer_controller_motor_encoder_position
-                name: Encoder absolut
               - entity: sensor.wohnzimmer_controller_tv_lift_position_percent
                 name: Position in Prozent
 

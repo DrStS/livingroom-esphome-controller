@@ -32,7 +32,6 @@ Vollstaendige Liste mit Typen: `docs/entity-map.md`. Kurzfassung:
 - `sensor.wohnzimmer_controller_tv_lift_position_percent`
 - `sensor.wohnzimmer_controller_tv_lift_position_mm`
 - `sensor.wohnzimmer_controller_tv_lift_position_pulses` (Diagnose)
-- `sensor.wohnzimmer_controller_motor_encoder_position` (Diagnose)
 - `sensor.wohnzimmer_controller_lift_geschwindigkeit` (Diagnose)
 - `sensor.wohnzimmer_controller_lift_zustand` (Diagnose)
 - `number.wohnzimmer_controller_lift_max_geschwindigkeit` (Diagnose/Config)

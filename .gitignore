@@ -53,6 +53,11 @@ run*.txt
 # Zwischenverzeichnis des Home-Assistant-Deploys (gefilterte secrets.yaml)
 .ha-deploy-tmp/
 
+# Rohmitschnitte von tools/watch_lift_logs.py. Das sind Momentaufnahmen einer
+# einzelnen Diagnosesitzung (mehrere MB Zustandszeilen je Lauf) und keine
+# Projektquelle -- Erkenntnisse daraus gehoeren in die Dokumentation.
+logs/
+
 # Exportarchive im Wurzelverzeichnis. Es sind Momentaufnahmen von components/
 # und secrets.example.yaml -- also Kopien von Dateien, die hier ohnehin
 # versioniert sind, samt __pycache__. Sie zu committen wuerde nur Binaerballast

@@ -1,4 +1,4 @@
-#include "lift_motor.h"
+﻿#include "lift_motor.h"
 
 #include "esphome/core/log.h"
 
@@ -10,6 +10,18 @@ namespace esphome::lift_motor {
 
 static const char *const TAG = "lift_motor";
 static constexpr uint32_t REFERENCE_STABLE_MS = 250;
+// Nach einem Fahrtende wird erst gespeichert, wenn seit dieser Zeit kein
+// Encoderpuls mehr eingetroffen ist. Das erfasst mechanischen Nachlauf, ohne
+// periodische NVS-Schreibvorgaenge einzufuehren.
+static constexpr uint32_t END_POSITION_STABLE_MS = 3000;
+// Ruhendes Encoderflattern: der PCNT liefert im Stillstand nachweislich +-1
+// Count, wenn die Welle genau auf einer Flanke steht (am Geraet gemessen
+// 6611<->6612 und 15122<->15123). Ohne Schwelle setzt genau dieses Flattern den
+// Stall-Timer bei jedem Zyklus zurueck -- am mechanischen Anschlag wurde deshalb
+// weitergedrueckt statt abzuschalten. Erst eine Bewegung ueber diese Schwelle
+// gilt als echter Vortrieb. Bei Kriechfahrt (approach_speed 150 Counts/s) sind
+// das in 800 ms rund 120 Counts, ein Fehlauslesen ist damit ausgeschlossen.
+static constexpr int64_t STALL_PROGRESS_COUNTS = 2;
 // Kennung des NVS-Datensatzes. Bei Formataenderung hochzaehlen, damit alte
 // Datensaetze nicht falsch interpretiert werden.
 // Kennung des Datensatztyps. Bleibt ueber alle Versionen KONSTANT -- die
@@ -129,7 +141,7 @@ void LiftMotor::setup() {
     return;
   }
 
-  int64_t position = this->encoder_->get_position();
+  int64_t position = this->read_position_();
 
   // --- Referenz aus dem NVS wiederherstellen ---
   // Die Mechanik ist selbsthemmend, ohne Strom bewegt sich der Lift nicht. Der
@@ -249,7 +261,10 @@ void LiftMotor::apply_restored_position_() {
     return;
   }
 
-  this->encoder_->set_position(position);
+  // Nur den Offset setzen, den Encoder NICHT anfassen -- Begruendung an
+  // read_position_(). Damit ist dieser Aufruf gegen den 1-ms-Regeltask
+  // unkritisch.
+  this->set_reference_offset_(position);
   this->pos_.store(position, std::memory_order_relaxed);
   this->target_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
@@ -267,18 +282,76 @@ void LiftMotor::apply_restored_position_() {
            (long long) position);
 }
 
-void LiftMotor::save_state_() {
-  if (!this->persist_position_ || !this->pref_ready_)
-    return;
+bool LiftMotor::sync_preferences_safely() {
+  bool task_paused = false;
+  if (this->task_ != nullptr) {
+    // Ein synchroner Flashzugriff ist nur bei sicher ausgeschaltetem Motor
+    // zulaessig. Damit kann eine Pause des Regeltasks niemals PWM festhalten.
+    if (this->busy() || this->motion_allowed_.load(std::memory_order_acquire) || this->duty() != 0.0f)
+      return false;
+
+    // Quittung des VORHERIGEN Handshakes verwerfen, bevor eine neue Pause
+    // angefordert wird. Ohne dieses Zuruecksetzen konnte hier ein altes true
+    // gelesen werden, das der Regeltask noch nicht geloescht hatte. Der
+    // Mainloop hielt den Task dann faelschlich fuer pausiert und schrieb ins
+    // Flash, waehrend die Regelung lief. Ein NVS-Schreibvorgang schaltet den
+    // Flash-Cache ab; der Regeltask liegt im Flash und stand dadurch still --
+    // mit weiterhin anliegender PWM, ohne Encoder-Read, ohne Softlimit und ohne
+    // Stall-Pruefung.
+    this->persistence_task_paused_.store(false, std::memory_order_release);
+    this->persistence_pause_requested_.store(true, std::memory_order_release);
+    const uint32_t pause_started = millis();
+    while (!this->persistence_task_paused_.load(std::memory_order_acquire) &&
+           millis() - pause_started < 250U) {
+      // Der Regeltask darf die Mainloop-Ueberwachung waehrend des kurzen
+      // Handshakes nicht ausloesen.
+      this->main_hb_.fetch_add(1, std::memory_order_relaxed);
+      delay(1);
+    }
+    task_paused = this->persistence_task_paused_.load(std::memory_order_acquire);
+    if (!task_paused) {
+      this->persistence_pause_requested_.store(false, std::memory_order_release);
+      ESP_LOGE(TAG, "Preferences-Sync abgebrochen: Regeltask bestaetigt sichere Pause nicht");
+      return false;
+    }
+  }
+
+  // Der Task verwirft nach der Pause seine alte Zeitbasis; der Mainloop setzt
+  // ebenfalls seine Task-Heartbeat-Zeitbasis neu.
+  auto release_task_pause = [&]() {
+    if (!task_paused)
+      return;
+    this->main_hb_.fetch_add(1, std::memory_order_release);
+    this->persistence_pause_requested_.store(false, std::memory_order_release);
+    this->last_seen_hb_ = this->hb_.load(std::memory_order_relaxed);
+    this->last_hb_change_ms_ = millis();
+  };
+
+  // ESP32Preferences::sync() kehrt bei leerer Pending-Liste sofort zurueck;
+  // ein sicherer Intervallaufruf ohne Aenderung erzeugt daher keinen
+  // Flash-Schreibvorgang und verbraucht keine Schreibzyklen.
+  const bool synced = global_preferences->sync();
+  release_task_pause();
+  if (!synced)
+    ESP_LOGE(TAG, "Preferences-Synchronisierung fehlgeschlagen");
+  return synced;
+}
+
+bool LiftMotor::save_state_(bool moving) {
+  if (!this->persist_position_)
+    return true;
+  if (!this->pref_ready_) {
+    ESP_LOGE(TAG, "NVS-Speichern abgelehnt: Preferences sind nicht bereit");
+    return false;
+  }
 
   const int64_t position = this->position();
   const bool homed = this->homed();
-  const bool moving = this->busy();
 
   // Nichts geaendert -> kein Schreibvorgang. Schont Flash-Zyklen.
   if (this->saved_valid_ && position == this->last_saved_position_ &&
       homed == this->last_saved_homed_ && moving == this->last_saved_moving_)
-    return;
+    return true;
 
   // Immer vollstaendig genullt anlegen, damit reserved[] definiert ist.
   LiftPersistedState state{};
@@ -287,26 +360,40 @@ void LiftMotor::save_state_() {
   state.position = position;
   state.homed = homed;
   state.moving = moving;
-  if (!this->pref_.save(&state))
-    return;
+  if (!this->pref_.save(&state)) {
+    ESP_LOGE(TAG, "NVS-Datensatz konnte nicht vorgemerkt werden");
+    return false;
+  }
 
-  // ESPHome legt save() nur in eine Warteliste; ins Flash schreibt erst sync().
-  // Da hier ausschliesslich seltene Ereignisse gespeichert werden (zwei
-  // Schreibvorgaenge pro Fahrt), ist der sofortige Schreibvorgang vertretbar --
-  // periodisches Speichern waere fuer das Flash schaedlich.
-  global_preferences->sync();
+  // Synchronisiert zugleich alle anderen vorgemerkten ESPHome-Zustaende. Der
+  // gemeinsame Flashzugriff laeuft ausschliesslich ueber die sichere Task-Pause.
+  if (!this->sync_preferences_safely())
+    return false;
 
   this->last_saved_position_ = position;
   this->last_saved_homed_ = homed;
   this->last_saved_moving_ = moving;
   this->saved_valid_ = true;
+  return true;
+}
+
+bool LiftMotor::prepare_motion_persistence_() {
+  this->end_save_pending_ = false;
+  if (this->last_saved_moving_)
+    return true;
+  if (this->save_state_(true))
+    return true;
+  ESP_LOGE(TAG, "Fahrt abgelehnt: moving=true konnte nicht sicher gespeichert werden");
+  return false;
 }
 
 void LiftMotor::clear_reference() {
   this->stop();
   this->homed_.store(false, std::memory_order_release);
   this->reference_pending_.store(false, std::memory_order_release);
-  this->save_state_();
+  this->end_save_pending_ = false;
+  if (!this->save_state_(false))
+    ESP_LOGE(TAG, "Referenz wurde im RAM verworfen, konnte aber nicht sicher ins NVS geschrieben werden");
   ESP_LOGW(TAG, "Referenz verworfen: Positionsfahrten sind bis zum neuen Referenzieren gesperrt");
 }
 
@@ -380,6 +467,10 @@ bool LiftMotor::goto_position(int64_t target) {
   this->reference_pending_.store(false, std::memory_order_relaxed);
   this->cmd_manual_direction_.store(0, std::memory_order_relaxed);
   this->cmd_relative_.store(false, std::memory_order_relaxed);
+  // Sicherheitsmarker vor der Motorfreigabe schreiben. Schlaegt der sichere
+  // NVS-Zugriff fehl, bleibt der Motor aus und der Auftrag wird abgelehnt.
+  if (!this->prepare_motion_persistence_())
+    return false;
   this->motion_allowed_.store(true, std::memory_order_release);
   this->cmd_move_.store(true, std::memory_order_release);
   this->cmd_epoch_.fetch_add(1, std::memory_order_release);
@@ -400,7 +491,7 @@ bool LiftMotor::move_relative(int64_t delta) {
     return false;
   }
 
-  const int64_t start = this->encoder_->get_position();
+  const int64_t start = this->read_position_();
   const int64_t target = start + delta;
   // Mit gueltiger Referenz bleiben die Softlimits verbindlich.
   if (this->homed() && !this->target_in_limits_(target)) {
@@ -413,6 +504,9 @@ bool LiftMotor::move_relative(int64_t delta) {
   this->reference_pending_.store(false, std::memory_order_relaxed);
   this->cmd_manual_direction_.store(0, std::memory_order_relaxed);
   this->cmd_relative_.store(true, std::memory_order_release);
+  // Wie bei absoluten Fahrten: sicher speichern oder Motor aus lassen.
+  if (!this->prepare_motion_persistence_())
+    return false;
   this->motion_allowed_.store(true, std::memory_order_release);
   this->cmd_move_.store(true, std::memory_order_release);
   this->cmd_epoch_.fetch_add(1, std::memory_order_release);
@@ -438,6 +532,9 @@ bool LiftMotor::start_manual(int direction) {
   this->reference_pending_.store(false, std::memory_order_relaxed);
   this->cmd_manual_direction_.store(direction, std::memory_order_relaxed);
   this->cmd_relative_.store(false, std::memory_order_relaxed);
+  // Auch manuelle Fahrten nur nach sicher geschriebenem Marker freigeben.
+  if (!this->prepare_motion_persistence_())
+    return false;
   this->motion_allowed_.store(true, std::memory_order_release);
   this->cmd_move_.store(true, std::memory_order_release);
   this->cmd_epoch_.fetch_add(1, std::memory_order_release);
@@ -465,7 +562,7 @@ bool LiftMotor::prepare_reference() {
     ESP_LOGE(TAG, "Referenzvorbereitung fehlgeschlagen: Encoder ist nicht bereit");
     return false;
   }
-  const int64_t position = this->encoder_->get_position();
+  const int64_t position = this->read_position_();
   const uint32_t now = millis();
   this->pos_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
@@ -498,7 +595,7 @@ bool LiftMotor::set_reference(int64_t position) {
   }
 
   const uint32_t now = millis();
-  const int64_t observed = this->encoder_->get_position();
+  const int64_t observed = this->read_position_();
   const int64_t last_observed = this->last_observed_pos_.load(std::memory_order_relaxed);
   if (observed != last_observed) {
     this->last_observed_pos_.store(observed, std::memory_order_relaxed);
@@ -514,7 +611,10 @@ bool LiftMotor::set_reference(int64_t position) {
     return false;
   }
 
-  this->encoder_->set_position(position);
+  // Nur den Offset setzen, den Encoder NICHT anfassen. Der Regeltask liest den
+  // Encoder mit 1 kHz; ein Schreibzugriff von hier waere ein konkurrierender
+  // Zugriff zweier Kerne auf dieselbe Struktur -- siehe read_position_().
+  this->set_reference_offset_(position);
   this->pos_.store(position, std::memory_order_relaxed);
   this->target_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
@@ -522,8 +622,14 @@ bool LiftMotor::set_reference(int64_t position) {
   this->state_.store(LIFT_REACHED, std::memory_order_relaxed);
   this->homed_.store(true, std::memory_order_release);
   this->reference_pending_.store(false, std::memory_order_release);
-  // Referenz sofort sichern, damit sie einen Stromausfall uebersteht.
-  this->save_state_();
+  // Referenz nur bestaetigen, wenn sie wirklich synchron im NVS liegt.
+  this->end_save_pending_ = false;
+  if (!this->save_state_(false)) {
+    this->homed_.store(false, std::memory_order_release);
+    this->state_.store(LIFT_IDLE, std::memory_order_relaxed);
+    ESP_LOGE(TAG, "Referenzierung fehlgeschlagen: NVS konnte nicht sicher geschrieben werden");
+    return false;
+  }
   ESP_LOGI(TAG, "Lift referenziert bei Position %lld (im NVS gesichert)", (long long) position);
   return true;
 }
@@ -559,6 +665,34 @@ void LiftMotor::task_loop() {
 
   while (true) {
     vTaskDelayUntil(&last_wake, period_ticks);
+
+    // Kooperative lockfreie Pause fuer einen synchronen NVS-Flashzugriff.
+    // Dieser Punkt liegt vor jedem PCNT- und Output-Zugriff des Zyklus. Der
+    // Mainloop fordert die Pause ausschliesslich bei ausgeschaltetem Motor an.
+    // Zweite, unabhaengige Sicherung gegen einen Flashzugriff unter laufender
+    // Regelung: der Task bestaetigt eine Pause NIEMALS bei freigegebenem Motor
+    // oder anliegendem Duty. Damit kann selbst eine fehlerhafte Anforderung aus
+    // dem Mainloop die Regelung nicht mit aktiver PWM anhalten. Bleibt die
+    // Bestaetigung aus, laeuft der Sync-Aufruf im Mainloop in seinen Timeout und
+    // ueberspringt den Schreibvorgang.
+    if (this->persistence_pause_requested_.load(std::memory_order_acquire) &&
+        !this->motion_allowed_.load(std::memory_order_acquire) &&
+        this->duty_.load(std::memory_order_relaxed) == 0.0f) {
+      this->persistence_task_paused_.store(true, std::memory_order_release);
+      while (this->persistence_pause_requested_.load(std::memory_order_acquire)) {
+        // Heartbeat am Leben halten, falls der andere Kern waehrend des
+        // Flashzugriffs weiterlaeuft. Wird der Cache global pausiert, werden
+        // nach der Freigabe beide Zeitbasen explizit neu gesetzt.
+        this->hb_.fetch_add(1, std::memory_order_relaxed);
+        vTaskDelay(1);
+      }
+      this->persistence_task_paused_.store(false, std::memory_order_release);
+      last_wake = xTaskGetTickCount();
+      t_prev = esp_timer_get_time();
+      seen_main_hb = this->main_hb_.load(std::memory_order_relaxed);
+      main_stale_ms = 0;
+      continue;
+    }
 
     const int64_t t_now = esp_timer_get_time();
     const uint32_t dt_us = static_cast<uint32_t>(t_now - t_prev);
@@ -611,7 +745,7 @@ void LiftMotor::task_loop() {
     }
 
     // Der Regeltask liest den PCNT in jedem Zyklus direkt; kein Mainloop-Relay.
-    const int64_t pos = this->encoder_->get_position();
+    const int64_t pos = this->read_position_();
     this->observe_encoder_(pos, now_ms);
     // Geschwindigkeitsmessung laeuft immer mit, auch im Stillstand (Diagnose).
     this->update_speed_(pos, t_now);
@@ -811,7 +945,10 @@ void LiftMotor::task_loop() {
     // approach_speed ist echte Bewegung zu erwarten -- gegen eine tatsaechliche
     // Blockade bleibt der Schutz damit voll wirksam.
     const bool stall_gate = fine || v_cmd >= this->approach_speed_;
-    if (pos == stall_ref) {
+    // Nur echter Vortrieb setzt den Timer zurueck, nicht das +-1-Flattern des
+    // ruhenden Encoders -- siehe STALL_PROGRESS_COUNTS.
+    const int64_t stall_delta = pos >= stall_ref ? pos - stall_ref : stall_ref - pos;
+    if (stall_delta <= STALL_PROGRESS_COUNTS) {
       if (stall_gate)
         stall_acc_ms += dt_ms;
     } else {
@@ -875,7 +1012,7 @@ void LiftMotor::task_loop() {
     }
 
     // Zweite, direkt an drive_ angrenzende Pruefung gegen spaete Positionsaenderungen.
-    const int64_t drive_pos = this->encoder_->get_position();
+    const int64_t drive_pos = this->read_position_();
     this->observe_encoder_(drive_pos, millis());
     if (this->homed() &&
         ((dir > 0 && drive_pos >= this->max_position_) || (dir < 0 && drive_pos <= this->min_position_))) {
@@ -921,12 +1058,33 @@ void LiftMotor::loop() {
   }
 
   const uint8_t current = this->state_.load(std::memory_order_relaxed);
+  const bool moving = current == LIFT_MOVING || current == LIFT_MANUAL;
   if (current != this->last_logged_state_) {
     this->last_logged_state_ = current;
-    // Genau hier wird gespeichert, sonst nie: bei Fahrtbeginn wird "moving"
-    // gesetzt, bei Fahrtende der Endstand mit "moving = false". Das sind zwei
-    // Flash-Schreibvorgaenge pro Fahrt statt eines periodischen Dauerbetriebs.
-    this->save_state_();
+
+    if (moving) {
+      // Alle regulaeren Fahrtpfade schreiben den Marker vor der Motorfreigabe.
+      // Hier niemals waehrend einer laufenden Fahrt ins Flash schreiben. Fehlt
+      // der Marker trotzdem, ist das eine Sicherheitsverletzung: Motor aus.
+      this->end_save_pending_ = false;
+      if (this->persist_position_ && !this->last_saved_moving_) {
+        this->motion_allowed_.store(false, std::memory_order_release);
+        this->coast_off_();
+        this->motion_direction_.store(0, std::memory_order_relaxed);
+        this->state_.store(LIFT_FAULT, std::memory_order_relaxed);
+        ESP_LOGE(TAG, "Fahrt ohne bestaetigten NVS-Marker erkannt -- Antrieb abgeschaltet");
+      }
+    } else if (this->last_saved_moving_) {
+      // Nicht bereits vor REACHED/STALL/STOP vergangene Stillstandszeit
+      // anrechnen: Die drei Sekunden beginnen immer mit dem Fahrtende. Jeder
+      // spaetere Encoderpuls aktualisiert denselben Zeitstempel im Regeltask
+      // erneut und startet die Ruhezeit dadurch automatisch von vorn.
+      this->end_save_pending_ = true;
+      this->last_encoder_change_ms_.store(now, std::memory_order_relaxed);
+      ESP_LOGI(TAG, "Fahrt beendet; Endstand wird nach %u ms ohne Encoderpuls gespeichert",
+               (unsigned) END_POSITION_STABLE_MS);
+    }
+
     const long long position = static_cast<long long>(this->position());
     const long long target = static_cast<long long>(this->target());
     switch (current) {
@@ -957,6 +1115,23 @@ void LiftMotor::loop() {
         break;
     }
   }
+
+  // Solange moving=true im NVS steht, wird ein Stromausfall sicher als
+  // unterbrochene Fahrt erkannt. Erst drei Sekunden nach dem letzten Puls wird
+  // genau einmal der stabile Endstand mit moving=false geschrieben. Diese
+  // Abfrage laeuft zwar im Mainloop, schreibt aber nicht periodisch.
+  if (this->end_save_pending_ && !moving && !this->busy() && this->last_saved_moving_ &&
+      now - this->last_encoder_change_ms_.load(std::memory_order_relaxed) >= END_POSITION_STABLE_MS) {
+    const long long final_position = static_cast<long long>(this->position());
+    // Nur ein Versuch pro Fahrt. Bei Fehlschlag bleibt moving=true im NVS und
+    // ein Neustart verwirft die Referenz sicher, statt einen falschen Stand zu
+    // laden. Keine periodischen Wiederholungen.
+    this->end_save_pending_ = false;
+    if (this->save_state_(false))
+      ESP_LOGI(TAG, "Stabiler Endstand im NVS gesichert: %+lld Counts", final_position);
+    else
+      ESP_LOGE(TAG, "Stabiler Endstand konnte nicht gesichert werden; moving=true bleibt aktiv");
+  }
 }
 
 void LiftMotor::dump_config() {
@@ -965,7 +1140,7 @@ void LiftMotor::dump_config() {
                 (unsigned) this->task_priority_, (unsigned) this->period_ms_);
   ESP_LOGCONFIG(TAG, "  Positionsgrenzen: %lld..%lld (inklusive)", (long long) this->min_position_,
                 (long long) this->max_position_);
-  ESP_LOGCONFIG(TAG, "  Richtung: positive Position/LPWM = Oeffnen; Encoder invert_direction=false");
+  ESP_LOGCONFIG(TAG, "  Richtung: positive logische Position/LPWM = Oeffnen");
   ESP_LOGCONFIG(TAG, "  Toleranz: %d, Feinfenster: %d, Pulsteiler: %u", (int) this->tolerance_,
                 (int) this->fine_window_, (unsigned) this->pulse_period_);
   ESP_LOGCONFIG(TAG, "  Duty min auf/ab (Vorsteuerung): %.2f / %.2f, max: %.2f", this->duty_min_up_,
