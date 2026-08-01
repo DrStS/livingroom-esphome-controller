@@ -300,6 +300,14 @@ class LiftMotor : public Component {
   std::atomic<int64_t> pos_{0};
   std::atomic<int64_t> target_{0};
   std::atomic<int64_t> last_observed_pos_{0};
+  /** Ruhelage fuer die Stillstandsbeurteilung.
+   *
+   * Der ruhende PCNT pendelt um einen Count, wenn die Welle genau auf einer
+   * Flanke steht (am Geraet gemessen 6611<->6612 und 15122<->15123). Als
+   * Bewegung gilt daher erst eine Abweichung von DIESER Lage oberhalb der
+   * Jitterschwelle -- nicht jede Aenderung gegenueber dem letzten Abtastwert.
+   * Sonst wird die Ruhezeit im 1-ms-Takt erneuert und laeuft nie ab. */
+  std::atomic<int64_t> standstill_ref_pos_{0};
   std::atomic<uint32_t> last_encoder_change_ms_{0};
   std::atomic<uint32_t> cmd_epoch_{0};
   std::atomic<bool> cmd_move_{false};

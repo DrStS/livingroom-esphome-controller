@@ -22,6 +22,31 @@ static constexpr uint32_t END_POSITION_STABLE_MS = 3000;
 // gilt als echter Vortrieb. Bei Kriechfahrt (approach_speed 150 Counts/s) sind
 // das in 800 ms rund 120 Counts, ein Fehlauslesen ist damit ausgeschlossen.
 static constexpr int64_t STALL_PROGRESS_COUNTS = 2;
+// Dieselbe Schwelle als allgemeiner Stillstandsbegriff. Sie gilt fuer ALLE
+// Stellen, die "der Encoder ruht" beurteilen muessen. Vorher benutzten das
+// Endspeichern und das Referenzieren exakte Gleichheit -- und wurden dadurch vom
+// Flattern ausgehebelt:
+//   * Endspeichern: last_encoder_change_ms_ wurde bei jedem +-1 erneuert, die
+//     drei Sekunden Ruhe liefen nie ab. Der Endstand wurde nie geschrieben,
+//     moving=true blieb im NVS und jeder Boot verwarf die Referenz.
+//   * Referenzieren: der Vergleich observed != last_observed schlug bei jedem
+//     Flattern an und lehnte mit "Encoder hat sich bewegt" ab.
+static constexpr int64_t STANDSTILL_JITTER_COUNTS = 2;
+// Toleranz, um die ein gespeicherter Stand die Softlimits verlassen darf und
+// trotzdem als gueltig wiederhergestellt wird (200 Counts sind rund 1,4 mm).
+//
+// WARUM: Nach dem Abschalten laeuft die Mechanik nach. Eine Fahrt auf die untere
+// Grenze endet daher regelmaessig ein paar Counts UNTER 0 -- am Geraet gemessen
+// -6. Die frueher exakte Pruefung "position >= min && position <= max" liess
+// genau diesen Normalfall durchfallen und verwarf die Referenz beim naechsten
+// Start komplett.
+//
+// Der Wert wird bewusst EXAKT wiederhergestellt und nicht in die Grenzen
+// geclamped. Ein Clamping wuerde bei jedem Neustart den Unterschuss
+// verschlucken und damit den Nullpunkt dauerhaft nach oben wandern lassen.
+// Die Softlimits greifen trotzdem: bei -4 ist Abwaertsfahrt sofort gesperrt,
+// aufwaerts bleibt frei.
+static constexpr int64_t RESTORE_LIMIT_MARGIN = 200;
 // Kennung des NVS-Datensatzes. Bei Formataenderung hochzaehlen, damit alte
 // Datensaetze nicht falsch interpretiert werden.
 // Kennung des Datensatztyps. Bleibt ueber alle Versionen KONSTANT -- die
@@ -67,9 +92,16 @@ const char *LiftMotor::state_name() const {
 }
 
 void LiftMotor::observe_encoder_(int64_t position, uint32_t now_ms) {
-  const int64_t previous = this->last_observed_pos_.exchange(position, std::memory_order_relaxed);
-  if (position != previous)
+  this->last_observed_pos_.store(position, std::memory_order_relaxed);
+  // Als Bewegung gilt erst eine Abweichung von der Ruhelage ueber der
+  // Jitterschwelle. Ein Pendeln um einen einzelnen Count laesst die Ruhezeit
+  // damit weiterlaufen, echte Fahrt setzt sie zuverlaessig zurueck.
+  const int64_t reference = this->standstill_ref_pos_.load(std::memory_order_relaxed);
+  const int64_t drift = position >= reference ? position - reference : reference - position;
+  if (drift > STANDSTILL_JITTER_COUNTS) {
+    this->standstill_ref_pos_.store(position, std::memory_order_relaxed);
     this->last_encoder_change_ms_.store(now_ms, std::memory_order_relaxed);
+  }
   this->pos_.store(position, std::memory_order_relaxed);
 }
 
@@ -172,17 +204,28 @@ void LiftMotor::setup() {
     this->pref_ready_ = true;
     LiftPersistedState saved{};
     const bool loaded = this->pref_.load(&saved);
+    // Spiegelt den im NVS vorgefundenen moving-Marker, damit die RAM-Buchhaltung
+    // nicht behauptet, es stehe false im Flash.
+    const bool loaded_moving = loaded && saved.magic == PERSIST_MAGIC && saved.moving;
     if (loaded && saved.magic == PERSIST_MAGIC && saved.version > PERSIST_VERSION) {
       // Von einer neueren Firmware geschrieben: Felder unbekannt, nicht raten.
       ESP_LOGW(TAG, "NVS-Datensatz hat Version %u, diese Firmware kennt nur %u -- ignoriert",
                (unsigned) saved.version, (unsigned) PERSIST_VERSION);
     } else if (loaded && saved.magic == PERSIST_MAGIC) {
-      const bool in_limits = saved.position >= this->min_position_ && saved.position <= this->max_position_;
+      const bool in_limits = saved.position >= this->min_position_ - RESTORE_LIMIT_MARGIN &&
+                             saved.position <= this->max_position_ + RESTORE_LIMIT_MARGIN;
       if (saved.moving) {
         // Die letzte Fahrt wurde nicht regulaer beendet (Spannungsverlust oder
         // Reset waehrend der Bewegung). Der gespeicherte Stand ist damit der
         // Wert VOM FAHRTBEGINN und nicht die tatsaechliche Position -- deshalb
         // bewusst keine Referenz uebernehmen.
+        //
+        // WICHTIG: Hier wird NICHT ins NVS geschrieben. Der Regeltask laeuft
+        // noch nicht, sync_preferences_safely() wuerde in den Timeout laufen und
+        // den Boot blockieren oder zum Absturz fuehren. Der moving=true-Marker
+        // bleibt im NVS stehen und wird erst beim naechsten regulaeren Anlass
+        // (Referenzieren oder Fahrtende) ueberschrieben. Bis dahin startet jeder
+        // weitere Boot ebenfalls unreferenziert -- das ist sicher und gewollt.
         ESP_LOGW(TAG, "Letzte Fahrt wurde unterbrochen (gespeicherter Stand %lld ist veraltet). "
                       "Referenz verworfen -- bitte untere Endlage anfahren und neu referenzieren.",
                  (long long) saved.position);
@@ -193,8 +236,13 @@ void LiftMotor::setup() {
         this->restore_pending_ = true;
         ESP_LOGI(TAG, "Referenz im NVS gefunden: Position %lld; wird nach dem Start uebernommen.",
                  (long long) saved.position);
+      } else if (saved.homed) {
+        ESP_LOGW(TAG, "Gespeicherte Position %lld liegt mehr als %lld Counts ausserhalb von %lld..%lld "
+                      "-- Referenz verworfen, bitte untere Endlage anfahren und neu referenzieren.",
+                 (long long) saved.position, (long long) RESTORE_LIMIT_MARGIN,
+                 (long long) this->min_position_, (long long) this->max_position_);
       } else {
-        ESP_LOGI(TAG, "NVS-Datensatz vorhanden, aber nicht referenziert oder ausserhalb der Grenzen");
+        ESP_LOGI(TAG, "NVS-Datensatz vorhanden, aber nicht referenziert");
       }
     } else {
       ESP_LOGI(TAG, "Kein gueltiger NVS-Datensatz: Lift startet unreferenziert. "
@@ -202,13 +250,18 @@ void LiftMotor::setup() {
     }
     this->last_saved_position_ = position;
     this->last_saved_homed_ = this->homed_.load(std::memory_order_relaxed);
-    this->last_saved_moving_ = false;
+    // Den tatsaechlich gelesenen Marker spiegeln statt blind false anzunehmen.
+    // Stand im NVS moving=true, dann ist er dort auch nach dem Start noch
+    // gesetzt; ein erneutes Schreiben beim naechsten Fahrtbeginn waere ein
+    // unnoetiger Flash-Zugriff.
+    this->last_saved_moving_ = loaded_moving;
     this->saved_valid_ = false;
   }
 
   this->pos_.store(position, std::memory_order_relaxed);
   this->target_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
+  this->standstill_ref_pos_.store(position, std::memory_order_relaxed);
   this->last_encoder_change_ms_.store(millis(), std::memory_order_relaxed);
   // Startwerte der Geschwindigkeitsmessung: Referenz auf die Ist-Position.
   this->speed_ref_pos_ = position;
@@ -268,6 +321,7 @@ void LiftMotor::apply_restored_position_() {
   this->pos_.store(position, std::memory_order_relaxed);
   this->target_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
+  this->standstill_ref_pos_.store(position, std::memory_order_relaxed);
   this->last_encoder_change_ms_.store(millis(), std::memory_order_relaxed);
   this->speed_ref_pos_ = position;
   this->homed_.store(true, std::memory_order_release);
@@ -392,6 +446,14 @@ void LiftMotor::clear_reference() {
   this->homed_.store(false, std::memory_order_release);
   this->reference_pending_.store(false, std::memory_order_release);
   this->end_save_pending_ = false;
+  // Beim Boot kann clear_reference() aus einem Switch-Restore feuern, bevor
+  // setup() die Preferences initialisiert oder den Regeltask gestartet hat.
+  // In diesem Fall genuegt das Verwerfen im RAM -- der NVS-Stand wird beim
+  // naechsten regulaeren Anlass (Referenzieren oder Fahrtende) ueberschrieben.
+  if (!this->pref_ready_ || this->task_ == nullptr) {
+    ESP_LOGW(TAG, "Referenz im RAM verworfen (NVS-Schreiben erst nach vollstaendigem Start moeglich)");
+    return;
+  }
   if (!this->save_state_(false))
     ESP_LOGE(TAG, "Referenz wurde im RAM verworfen, konnte aber nicht sicher ins NVS geschrieben werden");
   ESP_LOGW(TAG, "Referenz verworfen: Positionsfahrten sind bis zum neuen Referenzieren gesperrt");
@@ -566,6 +628,7 @@ bool LiftMotor::prepare_reference() {
   const uint32_t now = millis();
   this->pos_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
+  this->standstill_ref_pos_.store(position, std::memory_order_relaxed);
   this->last_encoder_change_ms_.store(now, std::memory_order_relaxed);
   ESP_LOGI(TAG, "Referenz vorbereitet: Antrieb aus; Position mindestens %u ms unveraendert lassen",
            (unsigned) REFERENCE_STABLE_MS);
@@ -596,12 +659,18 @@ bool LiftMotor::set_reference(int64_t position) {
 
   const uint32_t now = millis();
   const int64_t observed = this->read_position_();
-  const int64_t last_observed = this->last_observed_pos_.load(std::memory_order_relaxed);
-  if (observed != last_observed) {
+  // Gegen die Ruhelage pruefen, nicht auf exakte Gleichheit. Der ruhende Encoder
+  // pendelt um einen Count; mit einem Gleichheitsvergleich war Referenzieren in
+  // genau diesen Lagen unmoeglich.
+  const int64_t reference = this->standstill_ref_pos_.load(std::memory_order_relaxed);
+  const int64_t drift = observed >= reference ? observed - reference : reference - observed;
+  if (drift > STANDSTILL_JITTER_COUNTS) {
     this->last_observed_pos_.store(observed, std::memory_order_relaxed);
+    this->standstill_ref_pos_.store(observed, std::memory_order_relaxed);
     this->last_encoder_change_ms_.store(now, std::memory_order_relaxed);
     this->pos_.store(observed, std::memory_order_relaxed);
-    ESP_LOGW(TAG, "Referenz abgelehnt: Encoder hat sich seit der letzten Task-Abtastung bewegt");
+    ESP_LOGW(TAG, "Referenz abgelehnt: Encoder hat sich seit der letzten Task-Abtastung bewegt "
+                  "(%lld Counts)", (long long) drift);
     return false;
   }
   const uint32_t stable_ms = now - this->last_encoder_change_ms_.load(std::memory_order_relaxed);
@@ -618,6 +687,7 @@ bool LiftMotor::set_reference(int64_t position) {
   this->pos_.store(position, std::memory_order_relaxed);
   this->target_.store(position, std::memory_order_relaxed);
   this->last_observed_pos_.store(position, std::memory_order_relaxed);
+  this->standstill_ref_pos_.store(position, std::memory_order_relaxed);
   this->motion_direction_.store(0, std::memory_order_relaxed);
   this->state_.store(LIFT_REACHED, std::memory_order_relaxed);
   this->homed_.store(true, std::memory_order_release);
@@ -660,6 +730,12 @@ void LiftMotor::task_loop() {
   auto reset_controller = [&]() {
     v_cmd = 0.0f;
     integral = 0.0f;
+    // Auch den Messfilter zuruecksetzen. Sonst haelt speed_filtered_ nach einem
+    // Richtungswechsel noch die alte Geschwindigkeit; der PI-Regler sieht ueber
+    // v_abs eine zu hohe Istgeschwindigkeit und drosselt beim Neuanlauf, obwohl
+    // der Antrieb steht.
+    this->speed_filtered_ = 0.0f;
+    this->speed_.store(0.0f, std::memory_order_relaxed);
     this->speed_cmd_.store(0.0f, std::memory_order_relaxed);
   };
 
@@ -944,16 +1020,29 @@ void LiftMotor::task_loop() {
     // schlaegt die Ueberwachung schon beim sanften Anfahren zu. Ab
     // approach_speed ist echte Bewegung zu erwarten -- gegen eine tatsaechliche
     // Blockade bleibt der Schutz damit voll wirksam.
-    const bool stall_gate = fine || v_cmd >= this->approach_speed_;
-    // Nur echter Vortrieb setzt den Timer zurueck, nicht das +-1-Flattern des
-    // ruhenden Encoders -- siehe STALL_PROGRESS_COUNTS.
-    const int64_t stall_delta = pos >= stall_ref ? pos - stall_ref : stall_ref - pos;
-    if (stall_delta <= STALL_PROGRESS_COUNTS) {
-      if (stall_gate)
-        stall_acc_ms += dt_ms;
-    } else {
+    // Das Zeitfenster startet erst, wenn der Regler wirklich Duty stellt, nicht
+    // schon beim Erreichen der Sollgeschwindigkeit. Sonst laeuft die Blockadezeit
+    // bereits, bevor der Antrieb ueberhaupt Moment aufgebaut hat und losbrechen
+    // konnte. Im Feinpositions-Pulsbetrieb wechselt der Duty bewusst mit
+    // Bremsphasen, dort bleibt das Fenster offen.
+    const float applied_duty = fabsf(this->duty_.load(std::memory_order_relaxed));
+    const bool stall_gate = fine || (v_cmd >= this->approach_speed_ &&
+                                     applied_duty >= this->duty_floor_(dir));
+    // Nur Fortschritt IN FAHRTRICHTUNG setzt den Timer zurueck. Der Betrag
+    // allein genuegt nicht: im Anschlag zurueckgedrueckt zu werden ist kein
+    // Vortrieb und darf die Ueberwachung nicht entschaerfen.
+    const int64_t progress = static_cast<int64_t>(dir) * (pos - stall_ref);
+    // Im Feinbetrieb genuegt EIN Count. Dort liegen zwischen fine_window und
+    // tolerance nur wenige Counts, die im Pulsbetrieb langsam abgearbeitet
+    // werden -- mit der groben Schwelle wuerde der Timer nie zurueckgesetzt und
+    // eine korrekte Feinpositionierung als Blockade gemeldet. Die Jitterschwelle
+    // ist dort auch nicht noetig, weil der Antrieb aktiv pulst.
+    const int64_t needed_progress = fine ? 1 : STALL_PROGRESS_COUNTS + 1;
+    if (progress >= needed_progress) {
       stall_ref = pos;
       stall_acc_ms = 0;
+    } else if (stall_gate) {
+      stall_acc_ms += dt_ms;
     }
     if (stall_acc_ms > this->stall_ms_) {
       this->stall_duty_.store(this->duty_.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -1080,6 +1169,10 @@ void LiftMotor::loop() {
       // spaetere Encoderpuls aktualisiert denselben Zeitstempel im Regeltask
       // erneut und startet die Ruhezeit dadurch automatisch von vorn.
       this->end_save_pending_ = true;
+      // Ruhelage auf den tatsaechlichen Endstand setzen, damit die drei Sekunden
+      // ab hier gemessen werden und ein Pendeln um einen Count sie nicht endlos
+      // verlaengert. Genau das hat das Endspeichern vorher blockiert.
+      this->standstill_ref_pos_.store(this->position(), std::memory_order_relaxed);
       this->last_encoder_change_ms_.store(now, std::memory_order_relaxed);
       ESP_LOGI(TAG, "Fahrt beendet; Endstand wird nach %u ms ohne Encoderpuls gespeichert",
                (unsigned) END_POSITION_STABLE_MS);

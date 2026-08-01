@@ -9,6 +9,9 @@
 #include <esp_err.h>
 #include <esp_private/esp_clk.h>
 #include <hal/pcnt_ll.h>
+#include <soc/gpio_periph.h>
+#include <soc/gpio_reg.h>
+#include <soc/io_mux_reg.h>
 
 namespace esphome::pcnt_quadrature {
 
@@ -380,6 +383,29 @@ void PcntQuadratureSensor::probe_pin_drive(float *high_a_pulldown, float *high_b
   const gpio_num_t pa = static_cast<gpio_num_t>(this->pin_a_->get_pin());
   const gpio_num_t pb = static_cast<gpio_num_t>(this->pin_b_->get_pin());
 
+  // Vorherige Pull-Konfiguration sichern und am Ende EXAKT wiederherstellen.
+  //
+  // FRUEHERER FEHLER: Hier wurde am Ende pauschal GPIO_PULLUP_ONLY gesetzt.
+  // Unsere Konfiguration betreibt die Pins aber ohne internen Pull, weil die
+  // Hall-Sensoren aktiv treiben. Nach dem ersten Aufruf dieser Diagnose hingen
+  // deshalb dauerhaft rund 45 kOhm intern an 3,3 V. Ein abgezogener Encoder
+  // lieferte dann HIGH, was faelschlich als Beweis fuer funktionierende externe
+  // Pull-ups gelesen wurde. Eine Messfunktion darf den Messgegenstand nicht
+  // verstellen.
+  const uint32_t saved_a = REG_READ(GPIO_PIN_MUX_REG[pa]);
+  const uint32_t saved_b = REG_READ(GPIO_PIN_MUX_REG[pb]);
+  auto pull_mode_of = [](uint32_t mux) {
+    const bool pu = (mux & FUN_PU_M) != 0;
+    const bool pd = (mux & FUN_PD_M) != 0;
+    if (pu && pd)
+      return GPIO_PULLUP_PULLDOWN;
+    if (pu)
+      return GPIO_PULLUP_ONLY;
+    if (pd)
+      return GPIO_PULLDOWN_ONLY;
+    return GPIO_FLOATING;
+  };
+
   gpio_set_pull_mode(pa, GPIO_PULLDOWN_ONLY);
   gpio_set_pull_mode(pb, GPIO_PULLDOWN_ONLY);
   // Der interne Pull-down liegt bei rund 45 kOhm, mit Leitungskapazitaet
@@ -394,13 +420,112 @@ void PcntQuadratureSensor::probe_pin_drive(float *high_a_pulldown, float *high_b
     n++;
   }
 
-  gpio_set_pull_mode(pa, GPIO_PULLUP_ONLY);
-  gpio_set_pull_mode(pb, GPIO_PULLUP_ONLY);
+  gpio_set_pull_mode(pa, pull_mode_of(saved_a));
+  gpio_set_pull_mode(pb, pull_mode_of(saved_b));
 
   if (high_a_pulldown)
     *high_a_pulldown = n ? (100.0f * static_cast<float>(ha) / static_cast<float>(n)) : -1.0f;
   if (high_b_pulldown)
     *high_b_pulldown = n ? (100.0f * static_cast<float>(hb) / static_cast<float>(n)) : -1.0f;
+}
+
+void PcntQuadratureSensor::sample_states(uint32_t duration_ms, uint32_t *state_counts,
+                                         uint32_t *edges_a, uint32_t *edges_b, uint32_t *samples) {
+  uint32_t counts[4] = {0, 0, 0, 0};
+  uint32_t ea = 0, eb = 0, n = 0;
+
+  if (this->pin_a_ != nullptr && this->pin_b_ != nullptr) {
+    const gpio_num_t pa = static_cast<gpio_num_t>(this->pin_a_->get_pin());
+    const gpio_num_t pb = static_cast<gpio_num_t>(this->pin_b_->get_pin());
+    int la = gpio_get_level(pa);
+    int lb = gpio_get_level(pb);
+    const uint32_t t_start = millis();
+    // Ohne Delay, damit auch kurze Zustaende erfasst werden. Der Aufrufer haelt
+    // die Dauer bewusst klein, damit die Mainloop-Ueberwachung nicht anspricht.
+    while (millis() - t_start < duration_ms) {
+      const int a = gpio_get_level(pa);
+      const int b = gpio_get_level(pb);
+      if (a != la) {
+        ea++;
+        la = a;
+      }
+      if (b != lb) {
+        eb++;
+        lb = b;
+      }
+      counts[(static_cast<unsigned>(a) << 1) | static_cast<unsigned>(b)]++;
+      n++;
+    }
+  }
+
+  if (state_counts != nullptr) {
+    for (int i = 0; i < 4; i++)
+      state_counts[i] = counts[i];
+  }
+  if (edges_a != nullptr)
+    *edges_a = ea;
+  if (edges_b != nullptr)
+    *edges_b = eb;
+  if (samples != nullptr)
+    *samples = n;
+}
+
+void PcntQuadratureSensor::set_pins_floating() {
+  if (this->pin_a_ == nullptr || this->pin_b_ == nullptr)
+    return;
+  gpio_set_pull_mode(static_cast<gpio_num_t>(this->pin_a_->get_pin()), GPIO_FLOATING);
+  gpio_set_pull_mode(static_cast<gpio_num_t>(this->pin_b_->get_pin()), GPIO_FLOATING);
+  ESP_LOGW(TAG, "Interne Pull-Widerstaende an GPIO%u/GPIO%u abgeschaltet (konfigurierter Zustand)",
+           this->pin_a_->get_pin(), this->pin_b_->get_pin());
+}
+
+void PcntQuadratureSensor::dump_pin_config() {
+  if (this->pin_a_ == nullptr || this->pin_b_ == nullptr) {
+    ESP_LOGE(TAG, "Pinkonfiguration nicht auslesbar: Pins fehlen");
+    return;
+  }
+
+  // Rohes Eingangsregister lesen. Der S3 hat zwei Register: GPIO0..31 und ab 32.
+  const uint32_t in_low = REG_READ(GPIO_IN_REG);
+  const uint32_t in_high = REG_READ(GPIO_IN1_REG);
+
+  const int pins[2] = {this->pin_a_->get_pin(), this->pin_b_->get_pin()};
+  const char *const labels[2] = {"A", "B"};
+
+  for (int i = 0; i < 2; i++) {
+    const int pin = pins[i];
+    const uint32_t mux = REG_READ(GPIO_PIN_MUX_REG[pin]);
+    const bool input_enabled = (mux & FUN_IE_M) != 0;
+    const bool pull_up = (mux & FUN_PU_M) != 0;
+    const bool pull_down = (mux & FUN_PD_M) != 0;
+    const uint32_t function = (mux >> MCU_SEL_S) & MCU_SEL_V;
+    const int register_level =
+        pin < 32 ? static_cast<int>((in_low >> pin) & 1U)
+                 : static_cast<int>((in_high >> (pin - 32)) & 1U);
+
+    ESP_LOGW(TAG,
+             "GPIO%d (Kanal %s): gpio_get_level=%d, IN-Register=%d, Input-Enable=%s, "
+             "Pull-up=%s, Pull-down=%s, IO-MUX-Funktion=%u, MUX-Register=0x%08X",
+             pin, labels[i], gpio_get_level(static_cast<gpio_num_t>(pin)), register_level,
+             YESNO(input_enabled), YESNO(pull_up), YESNO(pull_down), (unsigned) function,
+             (unsigned) mux);
+  }
+
+  // Rohstand direkt aus der PCNT-Hardware, unabhaengig von unserer Akkumulation.
+  if (this->unit_ != nullptr) {
+    int raw = 0;
+    const esp_err_t err = pcnt_unit_get_count(this->unit_, &raw);
+    if (err == ESP_OK) {
+      taskENTER_CRITICAL(&this->mux_);
+      const int64_t accumulated = this->position_;
+      const int32_t last = this->last_driver_count_;
+      taskEXIT_CRITICAL(&this->mux_);
+      ESP_LOGW(TAG, "PCNT: Rohzaehler=%d, letzter Rohwert=%d, akkumuliert=%lld, HW bereit=%s",
+               raw, (int) last, (long long) accumulated, YESNO(this->hw_ready_));
+    } else {
+      ESP_LOGE(TAG, "PCNT-Rohzaehler nicht lesbar: %s", esp_err_to_name(err));
+    }
+  }
 }
 
 void PcntQuadratureSensor::dump_config() {

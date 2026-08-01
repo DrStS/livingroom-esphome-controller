@@ -35,7 +35,7 @@ esphome:
   name: ${device_name}
   project:
     name: sicklinger.livingroom_controller
-    version: "0.1.0"
+    version: "1.0.1"
   # Bootaktionen betreffen nur den Luefter und das Wiederherstellen der Szene.
   # LiftMotor setzt den Motor in setup() sicher aus; hier darf keinerlei
   # Motorfahrt oder Motorausgabe stehen.
@@ -45,14 +45,22 @@ esphome:
   # und Ein/Aus liegen im NVS). Frueher stand hier ein fester Teststartzustand,
   # der genau das ueberschrieben hat; er ist entfernt.
   on_boot:
-    priority: -100
-    then:
+    - priority: 800
+      then:
+        - lambda: |-
+            ESP_LOGI("boot", "===== Firmware v1.0.1 =====");
+    - priority: -100
+      then:
       # Luefter-Anlauf: kurz kraeftiger, damit er sicher losdreht.
       - output.set_level:
           id: out_fan_pwm
           level: 45%
       # Kurzer Delay wartet auf Light-Init.
       - delay: 2s
+      # Ab hier ist das gesamte Setup durch und die Strips sind initialisiert.
+      # Erst jetzt darf apply_light_scene Lichtaufrufe ausfuehren -- siehe die
+      # ausfuehrliche Begruendung an der Definition von lights_ready.
+      - lambda: 'id(lights_ready) = true;'
       # War eine Szene aktiv, wird sie erneut angewendet -- sonst behalten die
       # Lichter einfach ihren wiederhergestellten Einzelzustand. Das Anwenden
       # erfolgt bewusst erst hier, wenn alle Lichter initialisiert sind.
@@ -134,9 +142,14 @@ lift_motor:
   pulse_period: 4
   brake_time: 200ms
   # Der PI-Regler braucht beim Losbrechen Zeit, bis der I-Anteil genug Duty
-  # aufgebaut hat -- daher 800 ms statt 500 ms. Schutz gegen echte Blockade
-  # bleibt voll erhalten (Zaehler laeuft nur bei Sollgeschwindigkeit > 0).
-  stall_time: 800ms
+  # aufgebaut hat. Frueher stand hier 800 ms -- das war unkritisch, solange die
+  # Stall-Erkennung durch das Encoderflattern ohnehin praktisch nie auslöste.
+  # Seit sie wirklich greift, muss das Fenster die Losbrechphase abdecken:
+  # sonst schaltet der Antrieb rund 1,3 s nach dem Start ab (0,5 s bis die
+  # Sollgeschwindigkeit approach_speed erreicht, plus stall_time), obwohl er
+  # gerade erst anlaeuft. 1,5 s decken das ab; gegen eine echte Blockade bleibt
+  # der Schutz voll wirksam, zusaetzlich begrenzt duty_max auf 90 Prozent.
+  stall_time: 1500ms
   # --- Trapezprofil, alles in Encoder-Counts pro Sekunde ---
   # 144 Counts/mm laut Uebersetzung (12 x 48 / 4 mm). 1500 Counts/s sind damit
   # rund 10,4 mm/s; der volle Hub (94500 Counts = 656,25 mm) dauert etwa 63 s,
@@ -260,6 +273,33 @@ globals:
     type: float
     restore_value: no
     initial_value: "0.35"
+
+  # Freigabe fuer apply_light_scene. Wird erst in on_boot (Prioritaet -100, also
+  # nach dem gesamten Setup) gesetzt.
+  #
+  # WARUM DAS NOETIG IST -- durch Crashlog belegt:
+  # Der Szenen-Select hat restore_value: true UND on_value. Beim Setup stellt
+  # TemplateSelect seinen gespeicherten Wert wieder her und ruft publish_state()
+  # auf; das feuert on_value und fuehrt apply_light_scene aus. Zu diesem
+  # Zeitpunkt sind die LED-Strips noch NICHT initialisiert -- AddressableLight
+  # hat seinen state_parent_ noch nicht gesetzt. Der erste Lichtaufruf endete
+  # daher in schedule_write_() auf einem Nullzeiger:
+  #   Guru Meditation Error: Core 1 panic'ed (StoreProhibited)
+  #   EXCVADDR 0x000000a8
+  #   TemplateSelect::setup -> Select::publish_state -> apply_light_scene
+  #     -> LightCall::perform -> AddressableLight::update_state
+  #     -> schedule_show -> schedule_write_
+  # Zehn solche Startversuche brachten ESPHome in den Safe Mode: nur noch
+  # Netzwerk und OTA erreichbar, keine API, kein Lift, keine Lichter.
+  #
+  # Sichtbar wurde das erst, als der gespeicherte Szenenwert dank des sicheren
+  # Preferences-Sync wirklich im NVS landete. Vorher blieb er ungespeichert, der
+  # Select startete auf "Manual" mit ausgeschalteten Lichtern und es kam gar
+  # kein Lichtaufruf zustande. Der Fehler lag also latent schon vorher vor.
+  - id: lights_ready
+    type: bool
+    restore_value: no
+    initial_value: "false"
 
 
 # =============================================================================
@@ -388,10 +428,33 @@ cover:
     # referenzieren zu koennen. Mit assumed_state verzichtet HA auf dieses
     # Sperren und zeigt Hoch/Stop/Runter dauerhaft bedienbar.
     assumed_state: true
+    # WICHTIG ZUM VERSTAENDNIS: Bei einem Template-Cover loest ESPHome nur bei
+    # ZWISCHENWERTEN die position_action aus. Genau 100 Prozent geht in
+    # open_action, genau 0 Prozent in close_action -- auch wenn der Slider
+    # benutzt wird, nicht nur die Pfeiltasten.
+    #
+    # Deshalb laufen die Endlagen hier NICHT mehr als manuelle Fahrt. Manuell
+    # bedeutet volle Marschfahrt bis ins Softlimit, und dort wird hart
+    # abgeschaltet -- inklusive LIMIT-Fehlermeldung fuer einen voellig normalen
+    # Bedienvorgang. Referenziert wird stattdessen die Grenze als Ziel
+    # angefahren: das Trapezprofil bremst bremsweggefuehrt ab, haelt in der
+    # Toleranz und meldet REACHED.
+    #
+    # Unreferenziert bleibt die manuelle Fahrt, denn absolute Ziele sind dann
+    # gesperrt -- und genau dann braucht man die Pfeile, um ueberhaupt auf die
+    # untere Endlage fahren und referenzieren zu koennen.
     open_action:
-      - lambda: 'id(lift)->start_manual(1);'
+      - lambda: |-
+          if (id(lift)->homed())
+            id(lift)->goto_position(id(lift)->max_position());
+          else
+            id(lift)->start_manual(1);
     close_action:
-      - lambda: 'id(lift)->start_manual(-1);'
+      - lambda: |-
+          if (id(lift)->homed())
+            id(lift)->goto_position(id(lift)->min_position());
+          else
+            id(lift)->start_manual(-1);
     position_action:
       - lambda: |-
           const int64_t span = id(lift)->max_position() - id(lift)->min_position();
@@ -806,6 +869,13 @@ switch:
     # Diagnose-Kategorie: im Alltag wird der Lift ueber das Cover bedient, der
     # Referenzschalter ist ein Einrichtungs-/Servicebedienelement.
     entity_category: diagnostic
+    # KEIN Restore: der Zustand wird ausschliesslich durch die Lambda bestimmt
+    # (homed() || reference_pending()). Ein Restore auf OFF wuerde die
+    # turn_off_action feuern und clear_reference() aufrufen, bevor LiftMotor
+    # seine Preferences initialisiert hat -- genau der Bootfehler, den wir im
+    # Log als "NVS-Speichern abgelehnt: Preferences sind nicht bereit" gesehen
+    # haben.
+    restore_mode: DISABLED
     # Während der 800-ms-Stillstandsprüfung bereits EIN anzeigen. Nach Erfolg
     # bleibt homed=true; bei einem Fehler wird reference_pending verworfen.
     lambda: 'return id(lift)->homed() || id(lift)->reference_pending();'
@@ -1012,6 +1082,16 @@ script:
   - id: apply_light_scene
     then:
       - lambda: |-
+          // Schutz gegen Aufrufe VOR dem Ende des Setups. Der Szenen-Select und
+          // der Intensitaetsregler stellen ihre gespeicherten Werte im Setup
+          // wieder her und feuern dabei on_value -- zu einem Zeitpunkt, an dem
+          // die LED-Strips noch nicht initialisiert sind. Ohne diese Abfrage
+          // stuerzt der erste Lichtaufruf mit StoreProhibited ab und ESPHome
+          // landet nach zehn Versuchen im Safe Mode. Begruendung im Detail an
+          // der Definition von lights_ready.
+          if (!id(lights_ready))
+            return;
+
           auto set_light = [](light::LightState *l, float r, float g, float b,
                               float w, float bri, const char *eff) {
             // Intensitaet 0 bedeutet wirklich AUS (keine 2 %-Resthelligkeit,

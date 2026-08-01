@@ -93,6 +93,44 @@ class PcntQuadratureSensor : public sensor::Sensor, public PollingComponent {
    */
   void probe_pin_drive(float *high_a_pulldown, float *high_b_pulldown);
 
+  /** Protokolliert die tatsaechliche GPIO-Konfiguration beider Kanaele.
+   *
+   * Anlass: Am Stecker liegen messbar 3,3 V, gpio_get_level() liefert aber 0.
+   * Ein Pin, der elektrisch HIGH ist und im Register als 0 erscheint, deutet auf
+   * einen abgeschalteten Eingangspfad (FUN_IE) oder eine falsche IO-MUX-Funktion
+   * hin -- also auf ein Konfigurationsproblem im Chip, nicht auf Kabel oder
+   * Sensor. Ausgegeben werden Pegel, das rohe GPIO-Eingangsregister,
+   * Input-Enable, die internen Pull-Widerstaende, die IO-MUX-Funktion sowie der
+   * Rohstand des PCNT-Zaehlers.
+   */
+  void dump_pin_config();
+
+  /** Setzt beide Encoderpins auf den konfigurierten Zustand ohne internen Pull.
+   *
+   * Noetig, weil eine aeltere Fassung von probe_pin_drive() am Ende pauschal
+   * Pull-up gesetzt hat. Ein einmal so verstellter Pin bleibt es bis zum
+   * Neustart und verfaelscht jede weitere Messung -- ein abgezogener Encoder
+   * liest dann HIGH, obwohl extern nichts hochzieht.
+   */
+  void set_pins_floating();
+
+  /** Zaehlt ueber duration_ms die Haeufigkeit der vier Quadraturzustaende.
+   *
+   * Index = (A << 1) | B, also 0=00, 1=01, 2=10, 3=11.
+   *
+   * WOZU: Ob zwei Kanaele Flanken liefern, sagt nichts ueber ihre Phasenlage.
+   * Gleich viele Flanken und je 50 Prozent High-Anteil ergeben sich bei 90 Grad
+   * Versatz genauso wie bei gleichphasigen Signalen. Die Zustandsverteilung
+   * trennt beides eindeutig:
+   *   alle vier Zustaende vorhanden   -> echte Quadratur, dekodierbar
+   *   nur 00 und 11                   -> gleichphasig, Schritte heben sich auf
+   *   nur 01 und 10                   -> gegenphasig, ebenfalls nicht dekodierbar
+   * Ein Quadraturzaehler kann bei den letzten beiden Faellen keine Richtung
+   * bilden und bleibt netto bei null -- genau das beobachtete Verhalten.
+   */
+  void sample_states(uint32_t duration_ms, uint32_t *state_counts, uint32_t *edges_a,
+                     uint32_t *edges_b, uint32_t *samples);
+
  protected:
   bool configure_channel_a_();
   bool configure_channel_b_();

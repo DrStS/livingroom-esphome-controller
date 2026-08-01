@@ -36,6 +36,17 @@ Warum zuerst: In diesen Zeilen steht im Klartext, WARUM der Controller nicht
 startet. Ohne das Protokoll flashen wir auf Verdacht. Es kostet eine halbe
 Minute und wir wissen es sicher.
 
+WORAUF ES DIESMAL ANKOMMT -- diese Zeilen sind entscheidend:
+  - "rst:0x..." am Anfang: die Reset-Ursache des letzten Starts.
+  - "Guru Meditation Error" oder "Task watchdog got triggered": echter Absturz,
+    danach folgt ein "Backtrace: 0x...". Bitte den Backtrace komplett mitkopieren.
+  - "boot count" / "Boot seems successful" / "safe mode": zeigt, ob ESPHome
+    absichtlich in den Safe Mode gegangen ist statt abzustuerzen.
+  - Zeilen mit "lift_motor", "pcnt_quadrature" oder "nvs".
+Damit laesst sich unterscheiden, ob die Firmware abstuerzt oder ob nur der
+Safe-Mode-Zaehler haengt. Ueber Netzwerk ist das nicht feststellbar, weil im
+Safe Mode die API gar nicht startet -- nur OTA antwortet.
+
 Falls gar kein Text erscheint oder nur unleserliche Zeichen: einfach weiter zu
 Schritt 3, das ist kein Beinbruch.
 
@@ -45,8 +56,18 @@ SCHRITT 3 -- Firmware aufspielen
 1. Zurueck auf die Startseite, dann  INSTALL  klicken.
    (Heisst je nach Version auch "Install" oder "Prepare for first use".)
 2. Die Datei  wohnzimmer-controller-REPARIERT.bin  auswaehlen.
-3. Bestaetigen und warten. Dauert etwa eine Minute.
-4. Nach dem Fertigmelden das USB-Kabel abziehen.
+3. Falls ein Haken "Erase device" / "Geraet loeschen" angeboten wird: SETZEN.
+   Das loescht auch den NVS-Bereich, in dem Lichtzustaende, Raum-Szene, die
+   Liftreferenz und der Safe-Mode-Zaehler liegen. Genau dieser gespeicherte
+   Zustand ist der Verdaechtige, wenn dieselbe Firmware einmal sauber startet
+   und beim naechsten Neustart nicht mehr. Ohne den Haken bleibt er erhalten.
+4. Bestaetigen und warten. Dauert etwa eine Minute.
+5. Nach dem Fertigmelden das USB-Kabel abziehen.
+
+WICHTIG NACH EINEM LOESCHEN: Die Liftreferenz ist dann weg. Der Lift laesst sich
+nur noch mit den Pfeiltasten manuell fahren. Unten auf die Endlage fahren und
+den Schalter "Lift Referenz" einschalten -- danach sind Prozentfahrten wieder
+freigegeben. Auch Lichtzustaende und die Raum-Szene starten auf Standardwerten.
 
 
 SCHRITT 4 -- Fertig
@@ -59,6 +80,17 @@ Pruefe danach in Home Assistant unter Diagnose den Schalter "Lift Referenz":
 - Ist er AUS, ist kein sicher nutzbarer Stand gespeichert. Dann den Lift mit
   dem Pfeil nach unten auf die untere Endlage fahren und den Schalter dort
   einschalten. Nicht referenziert sind nur manuelle Pfeilfahrten erlaubt.
+
+
+PRUEFSUMME DIESER DATEI
+-----------------------
+wohnzimmer-controller-REPARIERT.bin
+  Groesse   685264 Bytes
+  SHA-256   95B750C7AE04F1FF8A00E300DAFD37A11F7CE941C69130800CB09280BA6A7E6C
+  Stand     31.07.2026, ESPHome-Build config_hash 0x626cc3d3
+
+Das ist ein vollstaendiges Factory-Image (Bootloader, Partitionstabelle,
+OTA-Daten und Firmware) und damit per USB allein aufspielbar.
 
 
 WAS IN DIESER FIRMWARE ANDERS IST
@@ -87,6 +119,22 @@ ohne vorgemerkte Aenderungen fuehrt keinen Flash-Schreibvorgang aus.
 
 OTA und geregeltes Herunterfahren stoppen zuerst den Lift und synchronisieren
 die vorgemerkten Zustaende unter einer kooperativen Pause des 1-ms-Regeltasks.
+
+Zusaetzlich in diesem Stand behoben:
+- Ein Race im Preferences-Handshake. Die Quittung des Regeltasks wurde vor einer
+  neuen Pausenanforderung nicht zurueckgesetzt, sodass eine alte Bestaetigung
+  gelten konnte und ins Flash geschrieben wurde, waehrend die Regelung lief. Ein
+  NVS-Schreibvorgang schaltet den Flash-Cache ab und haelt den Regeltask an --
+  mit weiter anliegender PWM und ohne Softlimit- oder Stall-Pruefung.
+- Die Stall-Erkennung wurde durch Encoderflattern ausgehebelt. Der ruhende PCNT
+  liefert +-1 Count, was den 800-ms-Zaehler dauernd zurueckgesetzt hat; am
+  Anschlag wurde deshalb weitergedrueckt statt abzuschalten. Es gilt jetzt eine
+  Schwelle von 2 Counts als "kein Vortrieb".
+
+OFFENER PUNKT: Warum dieselbe Firmware einmal sauber startet und beim naechsten
+Neustart im Safe Mode landet, ist noch NICHT geklaert. Ueber Netzwerk laesst sich
+das nicht klaeren, weil im Safe Mode nur OTA antwortet. Deshalb ist Schritt 2
+(Protokoll lesen) diesmal wirklich der wichtigste Schritt.
 
 
 WENN ES NICHT KLAPPT
