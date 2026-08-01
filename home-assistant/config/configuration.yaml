@@ -38,6 +38,9 @@ input_boolean:
   wohnzimmer_kino_aktiv:
     name: "Kino-Modus aktiv"
     icon: mdi:movie-open
+  wohnzimmer_nacht_aktiv:
+    name: "Gute-Nacht-Modus aktiv"
+    icon: mdi:weather-night
 
 input_number:
   wohnzimmer_kino_prev_position:
@@ -52,11 +55,29 @@ input_number:
     max: 100
     step: 1
     mode: box
+  wohnzimmer_prev_sideboard_brightness:
+    name: "Prev: Sideboard Helligkeit"
+    min: 0
+    max: 255
+    step: 1
+    mode: box
+  wohnzimmer_prev_cabinet_brightness:
+    name: "Prev: Cabinet Helligkeit"
+    min: 0
+    max: 255
+    step: 1
+    mode: box
 
 input_text:
   wohnzimmer_kino_prev_scene:
     name: "Kino: vorherige Szene"
     max: 50
+  wohnzimmer_prev_sideboard_state:
+    name: "Prev: Sideboard Zustand"
+    max: 200
+  wohnzimmer_prev_cabinet_state:
+    name: "Prev: Cabinet Zustand"
+    max: 200
 
 # -----------------------------------------------------------------------------
 # Dashboards

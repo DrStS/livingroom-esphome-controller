@@ -1,39 +1,36 @@
 # =============================================================================
-# SKRIPTE -- ausgerollt mit: python tools/ha.py deploy
+# SKRIPTE -- ausgerollt mit: python tools/ha.py deploy --core
 # =============================================================================
 
-# Kino-Modus: Toggle. Erster Druck speichert den aktuellen Zustand und wechselt
-# auf Kino (Lift 18 %, Cinema, 35 %). Zweiter Druck stellt den vorherigen
-# Zustand wieder her.
+# Gemeinsame Logik: Beide Modi merken sich Szene, Intensitaet, Liftposition und
+# den manuellen Lichtzustand beider Strips. Der erste aktivierte Modus merkt,
+# Wechsel zwischen Modi ueberschreibt nicht. Beim Deaktivieren des letzten wird
+# alles wiederhergestellt und die Helper geleert.
+
+# ---------------------------------------------------------------------------
+# KINO-MODUS
+# ---------------------------------------------------------------------------
 wohnzimmer_kino:
   alias: "Wohnzimmer Kino"
   icon: mdi:movie-open
-  description: "Toggle: Kino ein/aus mit Zustandswiederherstellung"
+  description: "Toggle: Kino ein/aus"
   sequence:
     - choose:
-        # Kino ist AUS -> einschalten
         - conditions:
             - condition: state
               entity_id: input_boolean.wohnzimmer_kino_aktiv
               state: "off"
           sequence:
-            # Aktuellen Zustand merken
-            - action: input_number.set_value
+            - action: input_boolean.turn_off
               target:
-                entity_id: input_number.wohnzimmer_kino_prev_position
-              data:
-                value: "{{ state_attr('cover.wohnzimmer_controller_tv_lift', 'current_position') | float(0) }}"
-            - action: input_text.set_value
-              target:
-                entity_id: input_text.wohnzimmer_kino_prev_scene
-              data:
-                value: "{{ states('select.wohnzimmer_controller_livingroom_light_scene') }}"
-            - action: input_number.set_value
-              target:
-                entity_id: input_number.wohnzimmer_kino_prev_intensity
-              data:
-                value: "{{ states('number.wohnzimmer_controller_livingroom_effect_intensity') | float(60) }}"
-            # Kino-Zustand setzen
+                entity_id: input_boolean.wohnzimmer_nacht_aktiv
+            - if:
+                - condition: template
+                  value_template: "{{ states('input_text.wohnzimmer_kino_prev_scene') in ['', 'unknown', 'unavailable'] }}"
+              then:
+                - action: script.turn_on
+                  target:
+                    entity_id: script.wohnzimmer_zustand_merken
             - action: select.select_option
               target:
                 entity_id: select.wohnzimmer_controller_livingroom_light_scene
@@ -52,24 +49,167 @@ wohnzimmer_kino:
             - action: input_boolean.turn_on
               target:
                 entity_id: input_boolean.wohnzimmer_kino_aktiv
-      # Kino ist EIN -> ausschalten, vorherigen Zustand wiederherstellen
       default:
-        - action: select.select_option
-          target:
-            entity_id: select.wohnzimmer_controller_livingroom_light_scene
-          data:
-            option: "{{ states('input_text.wohnzimmer_kino_prev_scene') }}"
-        - action: number.set_value
-          target:
-            entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
-          data:
-            value: "{{ states('input_number.wohnzimmer_kino_prev_intensity') | float(60) }}"
-        - action: cover.set_cover_position
-          target:
-            entity_id: cover.wohnzimmer_controller_tv_lift
-          data:
-            position: "{{ states('input_number.wohnzimmer_kino_prev_position') | int(0) }}"
         - action: input_boolean.turn_off
           target:
             entity_id: input_boolean.wohnzimmer_kino_aktiv
+        - action: script.turn_on
+          target:
+            entity_id: script.wohnzimmer_zustand_wiederherstellen
+  mode: single
+
+# ---------------------------------------------------------------------------
+# GUTE-NACHT-MODUS
+# ---------------------------------------------------------------------------
+wohnzimmer_gute_nacht:
+  alias: "Wohnzimmer Gute Nacht"
+  icon: mdi:weather-night
+  description: "Toggle: Lichter aus / vorherigen Zustand wiederherstellen"
+  sequence:
+    - choose:
+        - conditions:
+            - condition: state
+              entity_id: input_boolean.wohnzimmer_nacht_aktiv
+              state: "off"
+          sequence:
+            - action: input_boolean.turn_off
+              target:
+                entity_id: input_boolean.wohnzimmer_kino_aktiv
+            - if:
+                - condition: template
+                  value_template: "{{ states('input_text.wohnzimmer_kino_prev_scene') in ['', 'unknown', 'unavailable'] }}"
+              then:
+                - action: script.turn_on
+                  target:
+                    entity_id: script.wohnzimmer_zustand_merken
+            - action: select.select_option
+              target:
+                entity_id: select.wohnzimmer_controller_livingroom_light_scene
+              data:
+                option: "Aus"
+            - action: input_boolean.turn_on
+              target:
+                entity_id: input_boolean.wohnzimmer_nacht_aktiv
+      default:
+        - action: input_boolean.turn_off
+          target:
+            entity_id: input_boolean.wohnzimmer_nacht_aktiv
+        - action: script.turn_on
+          target:
+            entity_id: script.wohnzimmer_zustand_wiederherstellen
+  mode: single
+
+# ---------------------------------------------------------------------------
+# HILFSSKRIPT: Zustand merken
+# ---------------------------------------------------------------------------
+wohnzimmer_zustand_merken:
+  alias: "Wohnzimmer Zustand merken"
+  description: "Speichert Szene, Intensitaet, Position und Lichtzustand"
+  sequence:
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.wohnzimmer_kino_prev_position
+      data:
+        value: "{{ state_attr('cover.wohnzimmer_controller_tv_lift', 'current_position') | float(0) }}"
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.wohnzimmer_kino_prev_scene
+      data:
+        value: "{{ states('select.wohnzimmer_controller_livingroom_light_scene') }}"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.wohnzimmer_kino_prev_intensity
+      data:
+        value: "{{ states('number.wohnzimmer_controller_livingroom_effect_intensity') | float(60) }}"
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.wohnzimmer_prev_sideboard_state
+      data:
+        value: >
+          {{ states('light.wohnzimmer_controller_sideboard') }}|{{ state_attr('light.wohnzimmer_controller_sideboard', 'brightness') | default(0) }}|{{ state_attr('light.wohnzimmer_controller_sideboard', 'rgb_color') | default([0,0,0]) | join(',') }}|{{ state_attr('light.wohnzimmer_controller_sideboard', 'effect') | default('None') }}
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.wohnzimmer_prev_cabinet_state
+      data:
+        value: >
+          {{ states('light.wohnzimmer_controller_cabinet') }}|{{ state_attr('light.wohnzimmer_controller_cabinet', 'brightness') | default(0) }}|{{ state_attr('light.wohnzimmer_controller_cabinet', 'rgb_color') | default([0,0,0]) | join(',') }}|{{ state_attr('light.wohnzimmer_controller_cabinet', 'effect') | default('None') }}
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.wohnzimmer_prev_sideboard_brightness
+      data:
+        value: "{{ state_attr('light.wohnzimmer_controller_sideboard', 'brightness') | default(0) }}"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.wohnzimmer_prev_cabinet_brightness
+      data:
+        value: "{{ state_attr('light.wohnzimmer_controller_cabinet', 'brightness') | default(0) }}"
+  mode: single
+
+# ---------------------------------------------------------------------------
+# HILFSSKRIPT: Zustand wiederherstellen
+# ---------------------------------------------------------------------------
+wohnzimmer_zustand_wiederherstellen:
+  alias: "Wohnzimmer Zustand wiederherstellen"
+  description: "Stellt Szene, Intensitaet, Position und Lichtzustand wieder her"
+  sequence:
+    # Szene und Intensitaet zuruecksetzen
+    - action: select.select_option
+      target:
+        entity_id: select.wohnzimmer_controller_livingroom_light_scene
+      data:
+        option: "{{ states('input_text.wohnzimmer_kino_prev_scene') | default('Manual') }}"
+    - action: number.set_value
+      target:
+        entity_id: number.wohnzimmer_controller_livingroom_effect_intensity
+      data:
+        value: "{{ states('input_number.wohnzimmer_kino_prev_intensity') | float(60) }}"
+    # Lift zurueck
+    - action: cover.set_cover_position
+      target:
+        entity_id: cover.wohnzimmer_controller_tv_lift
+      data:
+        position: "{{ states('input_number.wohnzimmer_kino_prev_position') | int(0) }}"
+    # Bei Manual-Szene: Strips manuell wiederherstellen (Effekt+Farbe)
+    - if:
+        - condition: template
+          value_template: "{{ states('input_text.wohnzimmer_kino_prev_scene') == 'Manual' }}"
+      then:
+        # Sideboard
+        - if:
+            - condition: template
+              value_template: "{{ states('input_text.wohnzimmer_prev_sideboard_state').split('|')[0] == 'on' }}"
+          then:
+            - action: light.turn_on
+              target:
+                entity_id: light.wohnzimmer_controller_sideboard
+              data:
+                brightness: "{{ states('input_text.wohnzimmer_prev_sideboard_state').split('|')[1] | int(128) }}"
+                rgb_color: "{{ states('input_text.wohnzimmer_prev_sideboard_state').split('|')[2].split(',') | map('int') | list }}"
+                effect: "{{ states('input_text.wohnzimmer_prev_sideboard_state').split('|')[3] }}"
+          else:
+            - action: light.turn_off
+              target:
+                entity_id: light.wohnzimmer_controller_sideboard
+        # Cabinet
+        - if:
+            - condition: template
+              value_template: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[0] == 'on' }}"
+          then:
+            - action: light.turn_on
+              target:
+                entity_id: light.wohnzimmer_controller_cabinet
+              data:
+                brightness: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[1] | int(128) }}"
+                rgb_color: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[2].split(',') | map('int') | list }}"
+                effect: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[3] }}"
+          else:
+            - action: light.turn_off
+              target:
+                entity_id: light.wohnzimmer_controller_cabinet
+    # Helper leeren
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.wohnzimmer_kino_prev_scene
+      data:
+        value: ""
   mode: single

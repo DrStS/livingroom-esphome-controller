@@ -66,16 +66,22 @@ views:
             entity: sensor.wohnzimmer_controller_tv_lift_position_mm
             name: Hub
             icon: mdi:ruler
-          - type: button
-            entity: script.wohnzimmer_kino
+          - type: tile
+            entity: input_boolean.wohnzimmer_kino_aktiv
             name: Kino
             icon: mdi:movie-open
+            color: amber
             tap_action:
               action: perform-action
               perform_action: script.wohnzimmer_kino
-            show_name: true
-            show_icon: true
-            show_state: false
+          - type: tile
+            entity: input_boolean.wohnzimmer_nacht_aktiv
+            name: Gute Nacht
+            icon: mdi:weather-night
+            color: indigo
+            tap_action:
+              action: perform-action
+              perform_action: script.wohnzimmer_gute_nacht
 
       # -- Licht -------------------------------------------------------------
       # Kaminfeuer flackert absichtlich. Cinema laesst das Sideboard ruhig
