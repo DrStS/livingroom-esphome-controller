@@ -212,6 +212,7 @@ external_components:
 
 logger:
   level: INFO
+  tx_buffer_size: 4096
 
 # Diagnose-Rohdaten (Heap/Loop-Zeit) fuer die debug-Sensoren.
 debug:
