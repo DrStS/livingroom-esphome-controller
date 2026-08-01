@@ -66,6 +66,16 @@ views:
             entity: sensor.wohnzimmer_controller_tv_lift_position_mm
             name: Hub
             icon: mdi:ruler
+          - type: button
+            entity: script.wohnzimmer_kino
+            name: Kino
+            icon: mdi:movie-open
+            tap_action:
+              action: perform-action
+              perform_action: script.wohnzimmer_kino
+            show_name: true
+            show_icon: true
+            show_state: false
 
       # -- Licht -------------------------------------------------------------
       # Kaminfeuer flackert absichtlich. Cinema laesst das Sideboard ruhig
@@ -131,7 +141,7 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: Leistung
+            heading: Leistung & Strom
             heading_style: title
             icon: mdi:flash
           - type: tile
@@ -143,6 +153,14 @@ views:
           - type: tile
             entity: sensor.wohnzimmer_controller_rail_5v_energy_daily
             name: 5 V heute
+          - type: tile
+            entity: sensor.wohnzimmer_controller_rail_12v_current
+            name: 12 V Strom
+            icon: mdi:current-dc
+          - type: tile
+            entity: sensor.wohnzimmer_controller_rail_5v_current
+            name: 5 V Strom
+            icon: mdi:current-dc
 
   # ===========================================================================
   # VERLAUF
@@ -200,6 +218,15 @@ views:
           - entity: sensor.wohnzimmer_controller_rail_12v_power
             name: 12 V
           - entity: sensor.wohnzimmer_controller_rail_5v_power
+            name: 5 V
+
+      - type: history-graph
+        title: Strom 12 V / 5 V
+        hours_to_show: 24
+        entities:
+          - entity: sensor.wohnzimmer_controller_rail_12v_current
+            name: 12 V
+          - entity: sensor.wohnzimmer_controller_rail_5v_current
             name: 5 V
 
       - type: statistics-graph

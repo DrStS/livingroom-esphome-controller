@@ -32,6 +32,33 @@ script: !include scripts.yaml
 scene: !include scenes.yaml
 
 # -----------------------------------------------------------------------------
+# Helper fuer den Kino-Modus (Zustand merken / wiederherstellen)
+# -----------------------------------------------------------------------------
+input_boolean:
+  wohnzimmer_kino_aktiv:
+    name: "Kino-Modus aktiv"
+    icon: mdi:movie-open
+
+input_number:
+  wohnzimmer_kino_prev_position:
+    name: "Kino: vorherige Position"
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+  wohnzimmer_kino_prev_intensity:
+    name: "Kino: vorherige Intensität"
+    min: 0
+    max: 100
+    step: 1
+    mode: box
+
+input_text:
+  wohnzimmer_kino_prev_scene:
+    name: "Kino: vorherige Szene"
+    max: 50
+
+# -----------------------------------------------------------------------------
 # Dashboards
 # -----------------------------------------------------------------------------
 # WICHTIG: hier steht absichtlich KEIN "mode: yaml" auf der Ebene von lovelace.
