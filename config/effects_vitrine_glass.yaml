@@ -1,0 +1,55 @@
+# VITRINE GLASS (75 virtuelle Pixel = 3x25 Kanten).
+# Effekte die alle 102 px des physischen Strips rendern, schreiben ueber
+# RawPixelOutput (cabinet_glass_edge_out) direkt in den Hardware-Buffer.
+# Die Partition dient nur als Trigger und HA-Entity.
+
+# FIREPLACE: reflektiertes Kaminlicht, identisch zum bisherigen Cabinet-Effekt.
+- fireplace:
+    name: "Fireplace"
+    raw_output_id: cabinet_glass_edge_out
+    role: REFLECTION
+    update_interval: 20ms
+    intensity: 100%
+    output_gain: 50%
+    green_gain: 100%
+    white_gain: 100%
+
+# MUSEUM: Kanten als warmweisser Parabel-Verlauf. Nur die 75 Kanten-Pixel
+# (3x25) dieser Partition. LOGISCHE Pre-Gamma-Werte -> ESPHome-Gamma 2.8
+# formt die Wahrnehmung. Beim Start Reveal von unten nach oben.
+- addressable_lambda:
+    name: "Museum"
+    update_interval: 33ms
+    lambda: |-
+      // 75 virtuelle Pixel: 0..24 = Kante Unten, 25..49 = Kante Mitte, 50..74 = Kante Oben
+      static float phase;
+      if (initial_run) phase = 0.0f;
+      phase += 0.02f;
+      if (phase > 4.0f) phase = 4.0f;
+      const int elen = 25;
+      const float emid = (elen - 1) / 2.0f;
+      for (int shelf = 0; shelf < 3; shelf++) {
+        float lv = phase - shelf * 0.6f;
+        if (lv < 0.0f) lv = 0.0f;
+        if (lv > 1.0f) lv = 1.0f;
+        const int base = shelf * 25;
+        for (int i = 0; i < elen; i++) {
+          float d = fabsf((float)i - emid) / emid;
+          float g = 1.0f - d * d;
+          if (g < 0.0f) g = 0.0f;
+          const float f = lv * g;
+          it[base + i] = Color((uint8_t)(120 * f), (uint8_t)(45 * f), 0, (uint8_t)(170 * f));
+        }
+      }
+
+# Kalibrierbild: zeigt die zentralen FIRE_PALETTE-Rohwerte 1:1.
+- fireplace_palette:
+    name: "Fireplace Palette (Kalibrierung)"
+    raw_output_id: cabinet_glass_edge_out
+    role: REFLECTION
+    output_gain: 100%
+    green_gain: 100%
+    white_gain: 100%
+
+- addressable_fireworks:
+    name: "Fireworks"

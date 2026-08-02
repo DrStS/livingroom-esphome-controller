@@ -35,7 +35,7 @@ esphome:
   name: ${device_name}
   project:
     name: sicklinger.livingroom_controller
-    version: "1.0.1"
+    version: "1.1.0"
   # Bootaktionen betreffen nur den Luefter und das Wiederherstellen der Szene.
   # LiftMotor setzt den Motor in setup() sicher aus; hier darf keinerlei
   # Motorfahrt oder Motorausgabe stehen.
@@ -48,7 +48,7 @@ esphome:
     - priority: 800
       then:
         - lambda: |-
-            ESP_LOGI("boot", "===== Firmware v1.0.1 =====");
+            ESP_LOGI("boot", "===== Firmware v1.1.0 =====");
     - priority: -100
       then:
       # Luefter-Anlauf: kurz kraeftiger, damit er sicher losdreht.
@@ -304,8 +304,8 @@ globals:
 
 
 # =============================================================================
-# LICHTER -- 2 Strips (wie Original-Hardware): Sideboard + Cabinet Glass Edge,
-# beide SK6812 RGBW adressierbar. (Es gibt physisch keinen dritten Strip.)
+# LICHTER -- 1 physischer Strip Sideboard + 1 physischer Strip Cabinet (internal)
+# mit 2 Partitionen (Vitrine Glass + Vitrine Spots). Alle SK6812 RGBW.
 # =============================================================================
 output:
   # Luefter-PWM (ECHT, LEDC 25 kHz)
@@ -368,13 +368,14 @@ light:
     # Effektliste ausgelagert: Basis-Effekte ohne Zonen-Effekte.
     effects: !include config/effects_sideboard.yaml
   # --- Cabinet Glass Edge (SK6812 RGBW, GPIO46) ueber RMT-DMA ---
-  # Langes Kabel -> RMT hat mehr Signalreserve als der SPI-Stream und laeuft
-  # damit auch ueber die lange Leitung einwandfrei (per Treiber-Tausch bestaetigt).
+  # Physischer Strip: internal, nicht direkt in HA sichtbar. Die Effekte
+  # (Fireplace, Museum, Fireworks) laufen auf den Partition-Lichtern und
+  # schreiben ueber RawPixelOutput auf diesen physischen Buffer.
   # Nutzt den einzigen DMA-faehigen RMT-Kanal des S3.
   - platform: serialized_rmt_led
-    id: light_cabinet_glass_edge
+    id: cabinet_physical
     output_id: cabinet_glass_edge_out   # Output-Objekt (RawPixelOutput) fuer Fireplace
-    name: "Cabinet"
+    internal: true
     pin: ${pin_led_glass_edge}
     num_leds: ${led_glass_edge_pixels}
     chipset: SK6812
@@ -393,8 +394,47 @@ light:
     # Gamma-Korrektur = ESPHome-Standard (2.8), siehe Sideboard.
     gamma_correct: 2.8
     restore_mode: RESTORE_DEFAULT_OFF
-    # Effektliste ausgelagert: Basis-Effekte + zonenbasierte Cabinet-Effekte.
-    effects: !include config/effects_cabinet.yaml
+
+  # --- Vitrine Glass (3x25 Kanten-Pixel) ---
+  # Partition ueber die drei Glaskanten des Cabinets. Eigenes Licht in HA mit
+  # Farbwahl, Helligkeit und Effekt-Dropdown. Strip-weite Effekte (Museum,
+  # Fireplace) schreiben ueber RawPixelOutput auf den physischen Buffer --
+  # die Partition ist nur Trigger und HA-Entity, nicht das Render-Ziel.
+  - platform: partition
+    name: "Vitrine Glass"
+    id: light_vitrine_glass
+    segments:
+      - id: cabinet_physical
+        from: 0
+        to: 24
+      - id: cabinet_physical
+        from: 34
+        to: 58
+      - id: cabinet_physical
+        from: 68
+        to: 92
+    gamma_correct: 2.8
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects: !include config/effects_vitrine_glass.yaml
+
+  # --- Vitrine Spots (3x9 Spot-Pixel) ---
+  # Partition ueber die drei Spot-Gruppen des Cabinets.
+  - platform: partition
+    name: "Vitrine Spots"
+    id: light_vitrine_spots
+    segments:
+      - id: cabinet_physical
+        from: 25
+        to: 33
+      - id: cabinet_physical
+        from: 59
+        to: 67
+      - id: cabinet_physical
+        from: 93
+        to: 101
+    gamma_correct: 2.8
+    restore_mode: RESTORE_DEFAULT_OFF
+    effects: !include config/effects_vitrine_spots.yaml
 
 # =============================================================================
 # LUEFTER (ECHT) -- AUTOMATISCHE Temperatur-Regelung (kein manueller Regler).
@@ -992,7 +1032,8 @@ script:
     mode: restart
     then:
       # 1) Pin-Zuordnung
-      - light.turn_off: light_cabinet_glass_edge
+      - light.turn_off: light_vitrine_glass
+      - light.turn_off: light_vitrine_spots
       - light.turn_on:
           id: light_sideboard_ambient
           brightness: 100%
@@ -1004,7 +1045,15 @@ script:
       - delay: 2s
       - light.turn_off: light_sideboard_ambient
       - light.turn_on:
-          id: light_cabinet_glass_edge
+          id: light_vitrine_glass
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          white: 0%
+          effect: "None"
+      - light.turn_on:
+          id: light_vitrine_spots
           brightness: 100%
           red: 100%
           green: 0%
@@ -1021,7 +1070,14 @@ script:
           blue: 0%
           white: 0%
       - light.turn_on:
-          id: light_cabinet_glass_edge
+          id: light_vitrine_glass
+          brightness: 100%
+          red: 100%
+          green: 0%
+          blue: 0%
+          white: 0%
+      - light.turn_on:
+          id: light_vitrine_spots
           brightness: 100%
           red: 100%
           green: 0%
@@ -1036,7 +1092,13 @@ script:
           blue: 0%
           white: 0%
       - light.turn_on:
-          id: light_cabinet_glass_edge
+          id: light_vitrine_glass
+          red: 0%
+          green: 100%
+          blue: 0%
+          white: 0%
+      - light.turn_on:
+          id: light_vitrine_spots
           red: 0%
           green: 100%
           blue: 0%
@@ -1050,7 +1112,13 @@ script:
           blue: 100%
           white: 0%
       - light.turn_on:
-          id: light_cabinet_glass_edge
+          id: light_vitrine_glass
+          red: 0%
+          green: 0%
+          blue: 100%
+          white: 0%
+      - light.turn_on:
+          id: light_vitrine_spots
           red: 0%
           green: 0%
           blue: 100%
@@ -1064,7 +1132,13 @@ script:
           blue: 0%
           white: 100%
       - light.turn_on:
-          id: light_cabinet_glass_edge
+          id: light_vitrine_glass
+          red: 0%
+          green: 0%
+          blue: 0%
+          white: 100%
+      - light.turn_on:
+          id: light_vitrine_spots
           red: 0%
           green: 0%
           blue: 0%
@@ -1076,7 +1150,11 @@ script:
           brightness: 100%
           effect: "None"
       - light.turn_on:
-          id: light_cabinet_glass_edge
+          id: light_vitrine_glass
+          brightness: 100%
+          effect: "None"
+      - light.turn_on:
+          id: light_vitrine_spots
           brightness: 100%
           effect: "None"
 
@@ -1120,31 +1198,38 @@ script:
           if (s == "Manual") {
             // Kein Eingriff: die Lichter behalten ihren Einzelzustand.
             clear_eff(id(light_sideboard_ambient));
-            clear_eff(id(light_cabinet_glass_edge));
+            clear_eff(id(light_vitrine_glass));
+            clear_eff(id(light_vitrine_spots));
           } else if (s == "Aus") {
             id(light_sideboard_ambient)->turn_off().perform();
-            id(light_cabinet_glass_edge)->turn_off().perform();
+            id(light_vitrine_glass)->turn_off().perform();
+            id(light_vitrine_spots)->turn_off().perform();
           } else if (s == "Kaminfeuer") {
-            // Beide Strips mit dem Raw-Kaminfeuer; HA-Slider (bri) steuert die
-            // Helligkeit ueber current_values im Effekt selbst.
+            // Alle drei Lichter mit Kaminfeuer. Die Cabinet-Effekte schreiben
+            // ueber RawPixelOutput auf den physischen Buffer (alle 102 Pixel).
+            // Vitrine Spots wird eingeschaltet damit der Effekt auch die Spot-
+            // Pixel beschreiben darf (sonst wuerden sie schwarz bleiben).
             set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
+            set_light(id(light_vitrine_glass), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
+            set_light(id(light_vitrine_spots), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
           } else if (s == "Vitrine") {
-            // Nur das Cabinet zeigt den Vitrinen-Look, das Sideboard bleibt aus.
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            // Museum-Look: Glass rendert Kanten, Spots rendert Spots. Sideboard aus.
+            set_light(id(light_vitrine_glass), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            set_light(id(light_vitrine_spots), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
             id(light_sideboard_ambient)->turn_off().perform();
           } else if (s == "Kaminfeuer + Vitrine") {
             set_light(id(light_sideboard_ambient), 1.0f, 0.3f, 0.0f, 0.0f, bri, "Fireplace");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            set_light(id(light_vitrine_glass), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            set_light(id(light_vitrine_spots), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
           } else if (s == "Cinema") {
-            // Filmbetrieb: am Sideboard bewusst KEIN Flackern, sondern das
-            // statische Parabelprofil -- der Strip sitzt direkt unter dem
-            // Bildschirm. Das Cabinet bleibt auf dem ruhigen Museum-Look.
+            // Filmbetrieb: Sideboard statisches Parabelprofil, Cabinet Museum-Look.
             set_light(id(light_sideboard_ambient), 1.0f, 0.35f, 0.0f, 1.0f, bri, "Cinema");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            set_light(id(light_vitrine_glass), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
+            set_light(id(light_vitrine_spots), 1.0f, 0.45f, 0.0f, 1.0f, bri, "Museum");
           } else if (s == "Feuerwerk") {
             set_light(id(light_sideboard_ambient), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
-            set_light(id(light_cabinet_glass_edge), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
+            set_light(id(light_vitrine_glass), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
+            set_light(id(light_vitrine_spots), 1.0f, 1.0f, 1.0f, 0.0f, bri, "Fireworks");
           }
 
 interval:

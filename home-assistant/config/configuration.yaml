@@ -61,8 +61,14 @@ input_number:
     max: 255
     step: 1
     mode: box
-  wohnzimmer_prev_cabinet_brightness:
-    name: "Prev: Cabinet Helligkeit"
+  wohnzimmer_prev_vitrine_glass_brightness:
+    name: "Prev: Vitrine Glass Helligkeit"
+    min: 0
+    max: 255
+    step: 1
+    mode: box
+  wohnzimmer_prev_vitrine_spots_brightness:
+    name: "Prev: Vitrine Spots Helligkeit"
     min: 0
     max: 255
     step: 1
@@ -75,8 +81,11 @@ input_text:
   wohnzimmer_prev_sideboard_state:
     name: "Prev: Sideboard Zustand"
     max: 200
-  wohnzimmer_prev_cabinet_state:
-    name: "Prev: Cabinet Zustand"
+  wohnzimmer_prev_vitrine_glass_state:
+    name: "Prev: Vitrine Glass Zustand"
+    max: 200
+  wohnzimmer_prev_vitrine_spots_state:
+    name: "Prev: Vitrine Spots Zustand"
     max: 200
 
 # -----------------------------------------------------------------------------

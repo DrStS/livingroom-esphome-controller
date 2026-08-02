@@ -129,10 +129,16 @@ wohnzimmer_zustand_merken:
           {{ states('light.wohnzimmer_controller_sideboard') }}|{{ state_attr('light.wohnzimmer_controller_sideboard', 'brightness') | default(0) }}|{{ state_attr('light.wohnzimmer_controller_sideboard', 'rgb_color') | default([0,0,0]) | join(',') }}|{{ state_attr('light.wohnzimmer_controller_sideboard', 'effect') | default('None') }}
     - action: input_text.set_value
       target:
-        entity_id: input_text.wohnzimmer_prev_cabinet_state
+        entity_id: input_text.wohnzimmer_prev_vitrine_glass_state
       data:
         value: >
-          {{ states('light.wohnzimmer_controller_cabinet') }}|{{ state_attr('light.wohnzimmer_controller_cabinet', 'brightness') | default(0) }}|{{ state_attr('light.wohnzimmer_controller_cabinet', 'rgb_color') | default([0,0,0]) | join(',') }}|{{ state_attr('light.wohnzimmer_controller_cabinet', 'effect') | default('None') }}
+          {{ states('light.wohnzimmer_controller_vitrine_glass') }}|{{ state_attr('light.wohnzimmer_controller_vitrine_glass', 'brightness') | default(0) }}|{{ state_attr('light.wohnzimmer_controller_vitrine_glass', 'rgb_color') | default([0,0,0]) | join(',') }}|{{ state_attr('light.wohnzimmer_controller_vitrine_glass', 'effect') | default('None') }}
+    - action: input_text.set_value
+      target:
+        entity_id: input_text.wohnzimmer_prev_vitrine_spots_state
+      data:
+        value: >
+          {{ states('light.wohnzimmer_controller_vitrine_spots') }}|{{ state_attr('light.wohnzimmer_controller_vitrine_spots', 'brightness') | default(0) }}|{{ state_attr('light.wohnzimmer_controller_vitrine_spots', 'rgb_color') | default([0,0,0]) | join(',') }}|{{ state_attr('light.wohnzimmer_controller_vitrine_spots', 'effect') | default('None') }}
     - action: input_number.set_value
       target:
         entity_id: input_number.wohnzimmer_prev_sideboard_brightness
@@ -140,9 +146,14 @@ wohnzimmer_zustand_merken:
         value: "{{ state_attr('light.wohnzimmer_controller_sideboard', 'brightness') | default(0) }}"
     - action: input_number.set_value
       target:
-        entity_id: input_number.wohnzimmer_prev_cabinet_brightness
+        entity_id: input_number.wohnzimmer_prev_vitrine_glass_brightness
       data:
-        value: "{{ state_attr('light.wohnzimmer_controller_cabinet', 'brightness') | default(0) }}"
+        value: "{{ state_attr('light.wohnzimmer_controller_vitrine_glass', 'brightness') | default(0) }}"
+    - action: input_number.set_value
+      target:
+        entity_id: input_number.wohnzimmer_prev_vitrine_spots_brightness
+      data:
+        value: "{{ state_attr('light.wohnzimmer_controller_vitrine_spots', 'brightness') | default(0) }}"
   mode: single
 
 # ---------------------------------------------------------------------------
@@ -190,22 +201,38 @@ wohnzimmer_zustand_wiederherstellen:
             - action: light.turn_off
               target:
                 entity_id: light.wohnzimmer_controller_sideboard
-        # Cabinet
+        # Vitrine Glass
         - if:
             - condition: template
-              value_template: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[0] == 'on' }}"
+              value_template: "{{ states('input_text.wohnzimmer_prev_vitrine_glass_state').split('|')[0] == 'on' }}"
           then:
             - action: light.turn_on
               target:
-                entity_id: light.wohnzimmer_controller_cabinet
+                entity_id: light.wohnzimmer_controller_vitrine_glass
               data:
-                brightness: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[1] | int(128) }}"
-                rgb_color: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[2].split(',') | map('int') | list }}"
-                effect: "{{ states('input_text.wohnzimmer_prev_cabinet_state').split('|')[3] }}"
+                brightness: "{{ states('input_text.wohnzimmer_prev_vitrine_glass_state').split('|')[1] | int(128) }}"
+                rgb_color: "{{ states('input_text.wohnzimmer_prev_vitrine_glass_state').split('|')[2].split(',') | map('int') | list }}"
+                effect: "{{ states('input_text.wohnzimmer_prev_vitrine_glass_state').split('|')[3] }}"
           else:
             - action: light.turn_off
               target:
-                entity_id: light.wohnzimmer_controller_cabinet
+                entity_id: light.wohnzimmer_controller_vitrine_glass
+        # Vitrine Spots
+        - if:
+            - condition: template
+              value_template: "{{ states('input_text.wohnzimmer_prev_vitrine_spots_state').split('|')[0] == 'on' }}"
+          then:
+            - action: light.turn_on
+              target:
+                entity_id: light.wohnzimmer_controller_vitrine_spots
+              data:
+                brightness: "{{ states('input_text.wohnzimmer_prev_vitrine_spots_state').split('|')[1] | int(128) }}"
+                rgb_color: "{{ states('input_text.wohnzimmer_prev_vitrine_spots_state').split('|')[2].split(',') | map('int') | list }}"
+                effect: "{{ states('input_text.wohnzimmer_prev_vitrine_spots_state').split('|')[3] }}"
+          else:
+            - action: light.turn_off
+              target:
+                entity_id: light.wohnzimmer_controller_vitrine_spots
     # Helper leeren
     - action: input_text.set_value
       target:

@@ -99,8 +99,13 @@ views:
             features:
               - type: light-brightness
           - type: tile
-            entity: light.wohnzimmer_controller_cabinet
-            name: Vitrine
+            entity: light.wohnzimmer_controller_vitrine_glass
+            name: Vitrine Glass
+            features:
+              - type: light-brightness
+          - type: tile
+            entity: light.wohnzimmer_controller_vitrine_spots
+            name: Vitrine Spots
             features:
               - type: light-brightness
           - type: tile
